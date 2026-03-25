@@ -1,9 +1,10 @@
+import hashlib
+import base64
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from app.config import settings
-import hashlib
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -11,11 +12,17 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # ── Password ──────────────────────────────────────────────────────────────────
 
 def hash_password(plain: str) -> str:
-    return pwd_context.hash(plain)
+    """Hash password using bcrypt after pre-hashing with SHA-256 to avoid 72-char limit."""
+    pw_hash = hashlib.sha256(plain.encode("utf-8")).digest()
+    pw_b64 = base64.b64encode(pw_hash).decode("utf-8")
+    return pwd_context.hash(pw_b64)
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    """Verify password by pre-hashing and then checking against bcrypt hash."""
+    pw_hash = hashlib.sha256(plain.encode("utf-8")).digest()
+    pw_b64 = base64.b64encode(pw_hash).decode("utf-8")
+    return pwd_context.verify(pw_b64, hashed)
 
 
 # ── Field hashing (one-way SHA-256 + secret salt) ────────────────────────────

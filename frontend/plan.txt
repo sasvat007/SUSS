@@ -1,0 +1,301 @@
+Here is the complete, updated implementation plan with every original detail preserved and all improvements merged in:
+
+---
+
+## CapitalSense — Complete UI/UX & Implementation Plan
+
+---
+
+### 1. LOGIN PAGE
+- JWT token based authentication
+- Credentials are hashed and stored
+- Standard email + password fields
+- "Forgot Password" recovery flow
+- On successful login, check if onboarding questionnaire has been completed — if not, redirect to questionnaire before home screen
+
+---
+
+### 2. SIGN UP PAGE
+Fields to collect:
+- Full Name
+- Phone Number
+- Office Address
+- Business Name
+- GST Number (India-specific, important for judge context)
+
+On completing signup, immediately redirect to the **Onboarding Questionnaire** before allowing access to the home screen.
+
+---
+
+### 3. TRANSACTIONAL BACKEND
+- **Setu** (Account Aggregator framework) for bank account linking
+- Users consent to link their bank account via Setu, giving the app real-time balance data without requiring manual bank statement uploads
+- This means the "available balance" on the Home Tab is live, not manually entered
+
+---
+
+### 4. QUESTIONNAIRE SYSTEM
+
+**Trigger conditions:**
+- **First-time login** — full onboarding questionnaire (mandatory, cannot skip)
+- **Weekly recurring** — shorter check-in questionnaire (pops up on first app open of the week)
+
+---
+
+**Onboarding Questionnaire (First Login — Full):**
+1. What is your minimum cash safety buffer? *(numeric input, e.g., ₹50,000 — below this threshold, the system triggers red alerts)*
+2. Do any of your vendors allow partial payments? *(Yes / No — can be refined per vendor later in Vendors tab)*
+3. What is your average payment delay tolerance? *(Single select: 0 days / 3–5 days / 1–2 weeks)*
+4. Which obligation types are completely non-negotiable for you? *(Multi-select: Rent, Salaries, Government/GST payments, Utilities, Loan EMIs)*
+5. What is your primary business category? *(Single select: Retail / Manufacturing / Services / Food & Beverage / Other)*
+6. What is your typical payment collection cycle? *(Single select: Immediate / Net-7 / Net-15 / Net-30 / Irregular)*
+
+**Weekly Check-in Questionnaire (Recurring — Shorter):**
+1. Did any vendors contact you about overdue payments this week? *(Yes / No)*
+2. Are you expecting any large incoming payments in the next 14 days? *(Yes / No — if Yes, input: amount + expected date)*
+3. Has your minimum cash buffer changed? *(Quick slider or numeric input — pre-filled with current value)*
+4. Did any new loan or external fund become available this week? *(Yes / No — if Yes, redirect to Add Fund flow)*
+
+All questionnaire responses feed directly into the **Obligation Prioritization Engine's weight system** and are stored (hashed) in the user's profile. They persist and update over time.
+
+---
+
+### 5. TOP BAR
+
+**Left side:** App logo / CapitalSense branding
+
+**Right side — two icons:**
+
+**A. Bell Icon (Notifications)**
+- Tapping opens an **in-app notification feed** (a slide-down panel or dedicated screen)
+- Shows chronological history of all alerts:
+  - "Days-to-zero dropped to 8 — action required" *(with timestamp)*
+  - "Vendor X invoice overdue by 3 days"
+  - "Scenario simulation detected a shortfall in the next 7 days"
+  - "New obligation added — prioritization list updated"
+  - "Weekly questionnaire due"
+- Each notification is tappable and deep-links to the relevant screen (e.g., tapping a Course of Action alert opens that tab directly)
+- Unread notifications show a red badge count on the bell icon
+- Push notifications are also sent to the device OS for background alerts (liquidity risk increases, payment deadlines approaching, financial health score declines)
+
+**B. Plus Icon (Add Financial Data)**
+- Tapping reveals a **dropdown list** with the following options:
+  - **Add Invoice** *(a vendor has billed you — this is a payable)*
+  - **Add Expense** *(a cost you've incurred)*
+  - **Add Receipt** *(proof of a payment already made — marks an obligation as completed)*
+  - **Add Fund** *(external fund sources — loans, investor deposits, etc. — manual entry of amount, source name, date received)*
+
+- **"Send Reminder" is NOT in this menu** *(moved to receivable cards in Course of Action — see Section 6)*
+
+**Security rules for all document additions:**
+- All information extracted from uploaded financial documents must be **hashed and stored securely**
+- After OCR extraction is complete, the **original document file must be automatically deleted** from the server — only the structured extracted data is retained
+- Sensitive identifiers (vendor names, amounts, GST numbers) are stored with **minimal field storage** to reduce exposure risk
+
+**Two-Tier OCR Pipeline (applied to all document additions):**
+- **Tier 1 — Tesseract OCR:** Used for clean, printed, typed documents — digital PDFs, bank statements, typed invoices. Fast and free.
+- **Tier 2 — Google Cloud Vision API / GPT-4o Vision:** Used for handwritten receipts, phone camera photos, informal Indian receipts, low-quality scans, and any document Tesseract confidence-scores below a threshold. The Vision LLM receives the image and is prompted: *"Extract vendor name, amount, due date, and any penalty clause from this receipt."* Handles messy handwriting, regional language text, and poor lighting.
+- The system automatically selects which tier to use based on document type and Tesseract confidence score. User never sees this choice — it is invisible.
+
+**Deduplication:** After extraction, the system checks the new document against all existing records using an ML deduplication model. If a duplicate is detected (same vendor, same amount, same date), the user is alerted before the record is saved.
+
+**Normalization:** All extracted data is normalized into a standard internal structure regardless of source format:
+```
+{
+  vendor: string,
+  amount: float,
+  currency: "INR",
+  due_date: date,
+  invoice_id: string,
+  type: payable | receivable | receipt | fund,
+  penalty_clause: string | null,
+  received_timestamp: datetime
+}
+```
+
+---
+
+### 6. SIDEBAR — 5 TABS
+
+---
+
+#### TAB 1: HOME
+
+**Section A — Financial Snapshot (top of screen)**
+- **Available Balance** — live balance pulled via Setu bank integration, updates in real time
+- **Days-to-Zero Liquidity Countdown** — prominently displayed, color-coded:
+  - 🟢 Green: >21 days
+  - 🟡 Yellow: 8–21 days
+  - 🔴 Red: <8 days
+  - Auto-updates whenever a new invoice, receipt, or fund is added
+  - Logic: invoice added = pending obligation (reduces runway), receipt added = finished obligation (increases runway)
+- **Financial Health Score** — a composite score (0–100) based on days-to-zero, obligation-to-balance ratio, overdue payments, and vendor confidence trends
+  - Displayed as a visual gauge or progress bar
+  - **Tapping this score redirects the user to the Course of Action tab** *(preserving original behavior)*
+
+**Section B — Expected Inflows Card** *(new addition)*
+- Shows total receivables (money owed *to* the user) broken into:
+  - Due in next 7 days: ₹X
+  - Due in next 14 days: ₹X
+  - Due in next 30 days: ₹X
+- This contextualizes the days-to-zero figure — user can see if relief is coming soon
+- Tapping this card redirects to the **Collect section** of the Course of Action tab
+
+**Section C — Quick Alerts**
+- A compact list of the 2–3 most critical active alerts (truncated, full list in bell icon)
+
+---
+
+#### TAB 2: COURSE OF ACTION
+
+Two clearly separated sections within this tab, switchable via a toggle or sub-tab at the top:
+
+---
+
+**Section A — PAY (Obligations / Payables)**
+
+Shows the output of the **Deterministic Obligation Prioritization Engine** — a ranked list of all outstanding payments the user owes, ordered by priority.
+
+**Each payment card in the list shows:**
+- Vendor name
+- Amount due
+- Due date
+- Priority rank (e.g., #1, #2, #3)
+- A short one-line reason (e.g., "High penalty risk — due tomorrow")
+- Status badge (Pending / Overdue / Partially Paid)
+
+**When a payment card is tapped (expanded view):**
+- Full **Chain-of-Thought reasoning** behind the ranking is displayed as a visual reasoning map:
+  - Urgency score
+  - Legal/penalty severity score
+  - Vendor flexibility score
+  - Partial payment feasibility
+  - Vendor confidence score
+  - Final weighted rank
+- Full payment details: vendor contact info, invoice ID, penalty clause (if any), days overdue
+- **"Draft Deferral Email" button** *(appears when engine recommends deferring this payment):*
+  - Tapping generates an AI-drafted negotiation/deferral email using the Agentic AI system
+  - Email is pre-filled with vendor name, amount, proposed new payment date
+  - Tone is automatically selected based on vendor confidence score and relationship type:
+    - Formal tone for legal counterparties, unknown vendors, low-confidence vendors
+    - Cooperative/casual tone for trusted, high-confidence, long-term vendors
+  - User can edit the draft in-line before sending
+  - "Send via Email / WhatsApp" share button to dispatch directly
+- **"Mark as Paid" button:**
+  - Tapping shows two options:
+    - **Full Amount** — marks obligation as fully settled
+    - **Partial Amount** — user inputs the amount paid, taps Confirm
+  - On either confirmation:
+    - Sends request to backend/ML engine
+    - Ranking list refreshes
+    - Available balance updates
+    - Days-to-zero recalculates
+    - Financial health score updates
+    - Vendor confidence score for this vendor updates (on-time = score increases, late = score decreases)
+  - The payment outcome (on-time / late / partial) is fed back into the **Vendor Confidence Scoring Logic** to influence future prioritization decisions
+
+---
+
+**Section B — COLLECT (Receivables)**
+
+Shows all outstanding amounts owed *to* the user by clients — money the user is waiting to receive.
+
+**Each receivable card shows:**
+- Client name
+- Amount expected
+- Due date
+- Days overdue (if applicable)
+- Status badge (Pending / Overdue / Partially Received)
+
+**When a receivable card is tapped (expanded view):**
+- Full details: client contact info, invoice ID, original due date
+- **"Send Reminder" button** *(this is where Send Reminder lives — contextually attached to a specific client and invoice, not a generic top-menu action)*
+  - Tapping generates an AI-drafted payment reminder message
+  - Tone adapts to client relationship type (formal for new clients, friendly for regulars)
+  - "Send via Email / WhatsApp" share button
+- **"Mark as Received" button:**
+  - Same full/partial split as Mark as Paid
+  - On confirmation: updates available balance, days-to-zero, financial health score, Expected Inflows card on Home tab
+
+---
+
+#### TAB 3: SCENARIO SIMULATION
+
+- User can model "what if" financial scenarios to see their impact on days-to-zero, balance, and obligation rankings
+- Example scenarios:
+  - "What if I defer Vendor B's payment by 7 days?"
+  - "What if Client X pays me late by 10 days?"
+  - "What if I take a ₹1,00,000 loan today?"
+  - "What if I make a partial payment of ₹20,000 to Vendor A?"
+- Each scenario instantly recalculates and shows:
+  - Updated days-to-zero
+  - Updated financial health score
+  - Updated obligation priority ranking
+  - Risk flag if scenario causes a shortfall
+- Scenarios are sandboxed — they do not affect real data until the user explicitly applies them
+- Evaluates multiple financial scenarios (e.g., paying rent first, splitting supplier payments, delaying flexible obligations) and selects the strategy minimizing overall risk
+
+---
+
+#### TAB 4: VENDORS
+
+- Full list of all vendors and clients the system has encountered across all ingested documents
+- **Each vendor/client card shows:**
+  - Name
+  - Vendor Confidence Score (0–100, updated after every payment interaction)
+  - Relationship type tag (Critical Partner / Regular Supplier / One-Time Vendor / Client)
+  - Payment history summary (X payments on time, Y late, Z partial)
+  - Contact info (phone, email — used by Agentic AI for email drafting)
+- **User can manually edit:**
+  - Relationship type (overrides system's inferred type)
+  - Contact info
+  - Notes field (e.g., "Always flexible on 5-day extensions")
+  - Partial payments allowed toggle (Yes/No per vendor)
+- **Vendor Confidence Scoring Logic:**
+  - Score is updated automatically after every payment interaction
+  - Factors: payment flexibility, accepted delays, negotiation success rate, historical on-time rate
+  - This score feeds both the Obligation Prioritization Engine (flexible vendors = lower urgency rank) and the Agentic AI email tone selector (high confidence = cooperative tone)
+
+---
+
+#### TAB 5: CHATBOT
+
+- In-app conversational assistant for platform assistance and financial queries
+- Users can ask:
+  - "How's my cash flow this week?"
+  - "Who should I pay first?"
+  - "What happens if I delay my rent payment?"
+  - "Draft an email to delay my payment to Vendor X"
+  - "How do I add a new invoice?"
+- The chatbot has access to the user's actual live financial state — it is not a generic FAQ bot
+- Backed by the same decision engine so answers are grounded in real data, not generic LLM responses
+- Also handles platform navigation assistance for non-technical users
+
+---
+
+### 7. SECURITY ARCHITECTURE (Applies System-Wide)
+
+- JWT token authentication with expiry and refresh token rotation
+- All credentials hashed (bcrypt or Argon2)
+- All sensitive financial identifiers (vendor names, amounts, GST numbers) hashed at field level in PostgreSQL
+- Original document files (invoice images, receipt photos, bank statement PDFs) auto-deleted from server immediately after OCR extraction completes — only structured extracted data is retained
+- Confidential data stored minimally — only fields required for the decision engine are kept
+- No raw financial documents stored long-term under any circumstances
+
+---
+
+### 8. BACKEND & ML ENGINE NOTES
+
+- **FastAPI** — REST APIs connecting Flutter mobile app to backend
+- **PostgreSQL** — stores normalized financial records, vendor profiles, questionnaire responses, historical payment data
+- **Python Deterministic Algorithm** — rule-based weight assignment engine for obligation prioritization. Weights include: urgency (due date proximity), legal/penalty severity, vendor flexibility score, partial payment feasibility, vendor confidence score. Uses values from questionnaire + vendor profiles + live balance
+- **Agentic AI** — LLM-powered system for drafting negotiation emails, deferral messages, and payment reminders. Takes as input: vendor name, amount, proposed date, vendor confidence score, relationship type, tone instruction. Outputs a ready-to-send draft
+- **Setu** — Account Aggregator integration for live bank balance sync
+- **Flutter** — cross-platform mobile app (iOS + Android)
+- All backend recalculations are triggered by:
+  - New document added
+  - Mark as Paid (full or partial)
+  - Mark as Received (full or partial)
+  - Questionnaire submitted/updated
+  - Manual vendor profile edit
+  - Scenario simulation run
