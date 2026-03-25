@@ -1,0 +1,101 @@
+"""
+Obligation Service
+Handles CRUD + mark-paid flow including ML re-prioritization.
+"""
+
+import uuid
+from datetime import datetime, timezone, date
+from typing import List, Optional
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_
+from fastapi import HTTPException, status
+
+from app.models.obligation import Obligation, ObligationStatus
+from app.models.user import User
+from app.schemas.obligation import ObligationCreate, ObligationOut, MarkPaidRequest, MarkPaidResponse
+from app.utils.security import hash_field
+from app.utils.audit import write_audit_log
+from app.services import ml_helpers
+
+
+async def create(payload: ObligationCreate, user: User, db: AsyncSession) -> ObligationOut:
+    ob = Obligation(
+        id=str(uuid.uuid4()),
+        user_id=user.id,
+        vendor_id=payload.vendor_id,
+        description=payload.description,
+        amount=payload.amount,
+        due_date=payload.due_date,
+        invoice_id_hash=hash_field(payload.invoice_id) if payload.invoice_id else None,
+    )
+    db.add(ob)
+    await db.flush()
+    await write_audit_log(db, "CREATE_OBLIGATION", user.id, "obligation", ob.id)
+    return ObligationOut.model_validate(ob)
+
+
+async def list_all(user: User, db: AsyncSession) -> List[ObligationOut]:
+    result = await db.execute(
+        select(Obligation).where(
+            and_(Obligation.user_id == user.id, Obligation.deleted_at.is_(None))
+        ).order_by(Obligation.due_date)
+    )
+    return [ObligationOut.model_validate(o) for o in result.scalars().all()]
+
+
+async def get_by_id(ob_id: str, user: User, db: AsyncSession) -> ObligationOut:
+    ob = await _fetch_or_404(ob_id, user.id, db)
+    return ObligationOut.model_validate(ob)
+
+
+async def mark_paid(
+    ob_id: str,
+    payload: MarkPaidRequest,
+    user: User,
+    db: AsyncSession,
+) -> MarkPaidResponse:
+    ob = await _fetch_or_404(ob_id, user.id, db)
+
+    remaining = ob.amount - ob.amount_paid
+    if payload.amount > remaining + 0.01:
+        raise HTTPException(status_code=400, detail="Payment exceeds remaining amount")
+
+    ob.amount_paid += payload.amount
+    ob.status = (
+        ObligationStatus.paid
+        if payload.payment_type == "full" or ob.amount_paid >= ob.amount - 0.01
+        else ObligationStatus.partially_paid
+    )
+    await db.flush()
+    await write_audit_log(db, "MARK_PAID", user.id, "obligation", ob.id,
+                          extra={"amount": payload.amount, "type": payload.payment_type})
+
+    # Rebuild financial state and call ML
+    dashboard, ml_resp = await ml_helpers.rebuild_and_prioritize(user, db)
+
+    return MarkPaidResponse(
+        obligation=ObligationOut.model_validate(ob),
+        new_balance=dashboard.available_balance,
+        priorities=[p.model_dump() for p in ml_resp.priorities],
+        alerts=ml_resp.alerts,
+    )
+
+
+async def soft_delete(ob_id: str, user: User, db: AsyncSession) -> None:
+    ob = await _fetch_or_404(ob_id, user.id, db)
+    ob.deleted_at = datetime.now(timezone.utc)
+    await write_audit_log(db, "DELETE_OBLIGATION", user.id, "obligation", ob.id)
+
+
+async def _fetch_or_404(ob_id: str, user_id: str, db: AsyncSession) -> Obligation:
+    result = await db.execute(
+        select(Obligation).where(
+            and_(Obligation.id == ob_id, Obligation.user_id == user_id,
+                 Obligation.deleted_at.is_(None))
+        )
+    )
+    ob = result.scalar_one_or_none()
+    if not ob:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Obligation not found")
+    return ob
