@@ -13,6 +13,7 @@ from fastapi import HTTPException, status
 
 from app.models.obligation import Obligation, ObligationStatus
 from app.models.user import User
+from app.models.vendor import Vendor
 from app.schemas.obligation import ObligationCreate, ObligationOut, MarkPaidRequest, MarkPaidResponse
 from app.utils.security import hash_field
 from app.utils.audit import write_audit_log
@@ -20,10 +21,33 @@ from app.services import ml_helpers
 
 
 async def create(payload: ObligationCreate, user: User, db: AsyncSession) -> ObligationOut:
+    v_id = payload.vendor_id
+
+    # Auto-create or resolve vendor by name if ID is missing but name exists
+    if not v_id and payload.vendor_name:
+        v_name = payload.vendor_name.strip()
+        v_result = await db.execute(
+            select(Vendor).where(
+                and_(Vendor.user_id == user.id, Vendor.name == v_name)
+            )
+        )
+        existing_v = v_result.scalar_one_or_none()
+        if existing_v:
+            v_id = existing_v.id
+        else:
+            new_v = Vendor(
+                id=str(uuid.uuid4()),
+                user_id=user.id,
+                name=v_name,
+                relationship_type="supplier"
+            )
+            db.add(new_v)
+            v_id = new_v.id
+
     ob = Obligation(
         id=str(uuid.uuid4()),
         user_id=user.id,
-        vendor_id=payload.vendor_id,
+        vendor_id=v_id,
         description=payload.description,
         amount=payload.amount,
         due_date=payload.due_date,

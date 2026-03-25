@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:capitalsense/features/admin_page.dart';
+import 'package:capitalsense/features/strategy_tab.dart';
 import 'package:capitalsense/widgets/animated_background.dart';
+import 'package:capitalsense/service/api_service.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -11,15 +15,49 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   int _selectedTab = 0;
+  final ApiService _api = ApiService();
+
+  bool _isLoading = true;
+  Map<String, dynamic>? _dashboardData;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboard();
+  }
+
+  Future<void> _loadDashboard() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    try {
+      final data = await _api.getDashboardSummary();
+      if (mounted) {
+        setState(() {
+          _dashboardData = data;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _error = e.toString().replaceAll('Exception: ', '');
+        });
+      }
+    }
+  }
 
   Widget _buildCurrentTab() {
     switch (_selectedTab) {
       case 0:
         return _buildOverviewTab();
       case 1:
-        return _buildPlaceholderTab("Strategy & Simulations");
+        return StrategyTab(dashboardData: _dashboardData);
       case 2:
-        return _buildPlaceholderTab("Audit & Records");
+        return _buildRecordsTab();
       case 3:
         return const AdminProfileScreen();
       default:
@@ -38,13 +76,572 @@ class _DashboardScreenState extends State<DashboardScreen> {
       floatingActionButton: _selectedTab == 0
           ? FloatingActionButton(
               backgroundColor: const Color(0xFF0F5B44),
-              onPressed: () {},
+              onPressed: () => _showQuickActionsMenu(context),
               child: const Icon(Icons.add, color: Colors.white, size: 30),
             )
           : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
     );
   }
+
+  // ── Quick Actions ──────────────────────────────────────────────────────────
+
+  void _showQuickActionsMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.only(topLeft: Radius.circular(30), topRight: Radius.circular(30)),
+      ),
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(25),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2))),
+              const SizedBox(height: 25),
+              const Text("Quick Financial Actions", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E))),
+              const SizedBox(height: 25),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildQuickActionItem(context, "Add Invoice", Icons.description, () => _handleInvoiceFlow(context)),
+                  _buildQuickActionItem(context, "Add Expense", Icons.payment, () => _showAddExpenseDialog(context)),
+                  _buildQuickActionItem(context, "Add Receipt", Icons.receipt, () => _showAddReceiptDialog(context)),
+                  _buildQuickActionItem(context, "Add Fund", Icons.add_business, () => _showAddFundDialog(context)),
+                ],
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildQuickActionItem(BuildContext context, String label, IconData icon, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: () {
+        Navigator.pop(context);
+        onTap();
+      },
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(color: const Color(0xFF0F5B44).withOpacity(0.08), borderRadius: BorderRadius.circular(20)),
+            child: Icon(icon, color: const Color(0xFF0F5B44), size: 28),
+          ),
+          const SizedBox(height: 10),
+          Text(label.split(" ").last, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.black54)),
+        ],
+      ),
+    );
+  }
+
+  // ── Add Expense Dialog ─────────────────────────────────────────────────────
+
+  void _showAddExpenseDialog(BuildContext context) {
+    final vendorCtrl = TextEditingController();
+    final descCtrl = TextEditingController();
+    final amountCtrl = TextEditingController();
+    final dateCtrl = TextEditingController();
+    String? selectedCategory = "General Expense";
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
+          title: const Center(child: Text("Add Expense", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E)))),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  value: selectedCategory,
+                  decoration: InputDecoration(
+                    labelText: "Category",
+                    prefixIcon: const Icon(Icons.category, color: Color(0xFF0F5B44)),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
+                  ),
+                  items: ["General Expense", "GST Payment", "Office Rent", "Salary / Wage", "Tax Payment", "Vendor Payment"]
+                      .map((c) => DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(fontSize: 13)))).toList(),
+                  onChanged: (v) => setDialogState(() => selectedCategory = v),
+                ),
+                const SizedBox(height: 15),
+                _dialogTextField(vendorCtrl, "Vendor / Payee (opt)", Icons.business),
+                const SizedBox(height: 12),
+                _dialogTextField(descCtrl, "Description", Icons.description),
+                const SizedBox(height: 12),
+                _dialogTextField(amountCtrl, "Amount (₹)", Icons.currency_rupee, isNumber: true),
+                const SizedBox(height: 12),
+                _dialogDateField(dateCtrl, "Due Date", ctx),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F5B44), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+              onPressed: () async {
+                if (amountCtrl.text.isEmpty || dateCtrl.text.isEmpty) return;
+                Navigator.pop(ctx);
+                setState(() => _isLoading = true);
+                try {
+                  await _api.createObligation(
+                    description: "${selectedCategory}: ${descCtrl.text}",
+                    amount: double.parse(amountCtrl.text),
+                    dueDate: dateCtrl.text,
+                    vendorName: vendorCtrl.text.isNotEmpty ? vendorCtrl.text : null,
+                  );
+                  _loadDashboard();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Expense added successfully!"), backgroundColor: Color(0xFF0F5B44)),
+                    );
+                  }
+                } catch (e) {
+                  setState(() => _isLoading = false);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+                    );
+                  }
+                }
+              },
+              child: const Text("Add", style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Add Receipt Dialog ─────────────────────────────────────────────────────
+
+  void _showAddReceiptDialog(BuildContext context) {
+    final clientCtrl = TextEditingController();
+    final amountCtrl = TextEditingController();
+    final dateCtrl = TextEditingController();
+    final descCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
+        title: const Center(child: Text("Add Receivable", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E)))),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _dialogTextField(clientCtrl, "Client Name", Icons.person),
+              const SizedBox(height: 12),
+              _dialogTextField(amountCtrl, "Amount (₹)", Icons.currency_rupee, isNumber: true),
+              const SizedBox(height: 12),
+              _dialogDateField(dateCtrl, "Expected Date", ctx),
+              const SizedBox(height: 12),
+              _dialogTextField(descCtrl, "Description (opt)", Icons.note),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F5B44), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+            onPressed: () async {
+              if (clientCtrl.text.isEmpty || amountCtrl.text.isEmpty || dateCtrl.text.isEmpty) return;
+              Navigator.pop(ctx);
+              try {
+                await _api.createReceivable(
+                  clientName: clientCtrl.text,
+                  amount: double.parse(amountCtrl.text),
+                  dueDate: dateCtrl.text,
+                  description: descCtrl.text.isNotEmpty ? descCtrl.text : null,
+                );
+                _loadDashboard();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Receivable added!"), backgroundColor: Color(0xFF0F5B44)),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            child: const Text("Add", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Add Fund Dialog ────────────────────────────────────────────────────────
+
+  void _showAddFundDialog(BuildContext context) {
+    final sourceCtrl = TextEditingController();
+    final amountCtrl = TextEditingController();
+    final dateCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
+        title: const Center(child: Text("Add Fund", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E)))),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _dialogTextField(sourceCtrl, "Source Name", Icons.account_balance),
+              const SizedBox(height: 12),
+              _dialogTextField(amountCtrl, "Amount (₹)", Icons.currency_rupee, isNumber: true),
+              const SizedBox(height: 12),
+              _dialogDateField(dateCtrl, "Date Received", ctx),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F5B44), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+            onPressed: () async {
+              if (sourceCtrl.text.isEmpty || amountCtrl.text.isEmpty || dateCtrl.text.isEmpty) return;
+              Navigator.pop(ctx);
+              try {
+                await _api.createFund(
+                  sourceName: sourceCtrl.text,
+                  amount: double.parse(amountCtrl.text),
+                  dateReceived: dateCtrl.text,
+                );
+                _loadDashboard();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Fund added!"), backgroundColor: Color(0xFF0F5B44)),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+                  );
+                }
+              }
+            },
+            child: const Text("Add", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Dialog Helpers ─────────────────────────────────────────────────────────
+
+  Widget _dialogTextField(TextEditingController ctrl, String label, IconData icon, {bool isNumber = false}) {
+    return TextField(
+      controller: ctrl,
+      keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon, color: const Color(0xFF0F5B44), size: 20),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        filled: true,
+        fillColor: Colors.grey.shade50,
+      ),
+    );
+  }
+
+  Widget _dialogDateField(TextEditingController ctrl, String label, BuildContext ctx) {
+    return TextField(
+      controller: ctrl,
+      readOnly: true,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: const Icon(Icons.calendar_today, color: Color(0xFF0F5B44), size: 20),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        filled: true,
+        fillColor: Colors.grey.shade50,
+      ),
+      onTap: () async {
+        final dt = await showDatePicker(
+          context: ctx,
+          initialDate: DateTime.now().add(const Duration(days: 7)),
+          firstDate: DateTime(2020),
+          lastDate: DateTime(2030),
+        );
+        if (dt != null) {
+          ctrl.text = "${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}";
+        }
+      },
+    );
+  }
+
+  // ── Invoice Flow ───────────────────────────────────────────────────────────
+
+  void _handleInvoiceFlow(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
+        title: const Center(child: Text("Invoice Source", style: TextStyle(fontWeight: FontWeight.bold))),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text("How would you like to add your invoice?", textAlign: TextAlign.center, style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 25),
+            _buildSourceTile(ctx, "Camera Scan", Icons.camera_alt, "Take a photo of your invoice", () => _pickFromCamera(ctx)),
+            const SizedBox(height: 12),
+            _buildSourceTile(ctx, "Upload Document", Icons.file_present, "Select from Files or PDF", () => _pickFromFiles(ctx)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickFromCamera(BuildContext dialogCtx) async {
+    Navigator.pop(dialogCtx);
+    try {
+      final picker = ImagePicker();
+      final XFile? photo = await picker.pickImage(source: ImageSource.camera, imageQuality: 85);
+      if (photo != null && mounted) {
+        _processOCR(photo.path);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Camera error: $e"), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _pickFromFiles(BuildContext dialogCtx) async {
+    Navigator.pop(dialogCtx);
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom, allowedExtensions: ['pdf', 'png', 'jpg', 'jpeg'],
+      );
+      if (result != null && result.files.isNotEmpty && mounted) {
+        _processOCR(result.files.first.path!);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("File picker error: $e"), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _processOCR(String path) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => const Center(child: CircularProgressIndicator(color: Color(0xFF0F5B44))),
+    );
+
+    try {
+      final data = await _api.uploadOcr(path);
+      if (mounted) {
+        Navigator.pop(context); // pop loading
+        _showOcrConfirmation(data);
+      }
+    } catch (e) {
+      if (mounted) {
+        Navigator.pop(context); // pop loading
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("OCR Failed: $e"), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  void _showOcrConfirmation(Map<String, dynamic> data) {
+    final vendorCtrl = TextEditingController(text: data['vendor_name'] ?? "");
+    final descCtrl = TextEditingController(text: "Invoice #${data['invoice_number'] ?? ''}");
+    final amountCtrl = TextEditingController(text: data['amount']?.toString() ?? "");
+    final dateCtrl = TextEditingController(text: data['date'] ?? "");
+    
+    // Suggested type from backend
+    bool isReceivable = data['suggested_type'] == 'receivable';
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
+          title: const Center(child: Text("Confirm Captured Data", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E)))),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text("We extracted the following info. Please verify.", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 20),
+                
+                // Toggle Button for Receivable vs Payable
+                Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(15)),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => setDialogState(() => isReceivable = false),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: !isReceivable ? Colors.red.shade700 : Colors.transparent,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Center(
+                              child: Text("PAYABLE", style: TextStyle(
+                                fontSize: 10, fontWeight: FontWeight.bold, 
+                                color: !isReceivable ? Colors.white : Colors.black45
+                              )),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () => setDialogState(() => isReceivable = true),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            decoration: BoxDecoration(
+                              color: isReceivable ? Colors.blue.shade700 : Colors.transparent,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Center(
+                              child: Text("RECEIVABLE", style: TextStyle(
+                                fontSize: 10, fontWeight: FontWeight.bold, 
+                                color: isReceivable ? Colors.white : Colors.black45
+                              )),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                
+                _dialogTextField(vendorCtrl, isReceivable ? "Client Name" : "Vendor Name", Icons.business),
+                const SizedBox(height: 12),
+                _dialogTextField(descCtrl, "Description", Icons.description),
+                const SizedBox(height: 12),
+                _dialogTextField(amountCtrl, "Amount (₹)", Icons.currency_rupee, isNumber: true),
+                const SizedBox(height: 12),
+                _dialogDateField(dateCtrl, "Due Date", ctx),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F5B44), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+              onPressed: () async {
+                if (amountCtrl.text.isEmpty || dateCtrl.text.isEmpty) return;
+                Navigator.pop(ctx);
+                setState(() => _isLoading = true);
+                try {
+                  if (isReceivable) {
+                    await _api.createReceivable(
+                      clientName: vendorCtrl.text,
+                      amount: double.parse(amountCtrl.text),
+                      dueDate: dateCtrl.text,
+                      description: descCtrl.text,
+                    );
+                  } else {
+                    await _api.createObligation(
+                      description: descCtrl.text,
+                      amount: double.parse(amountCtrl.text),
+                      dueDate: dateCtrl.text,
+                      vendorName: vendorCtrl.text.isNotEmpty ? vendorCtrl.text : null,
+                    );
+                  }
+                  
+                  _loadDashboard();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(isReceivable ? "Receivable added!" : "Obligation added!"), 
+                        backgroundColor: isReceivable ? Colors.blue.shade700 : const Color(0xFF0F5B44)
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  setState(() => _isLoading = false);
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text("Save Error: $e"), backgroundColor: Colors.red),
+                    );
+                  }
+                }
+              },
+              child: const Text("Confirm & Save", style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSourceTile(BuildContext context, String title, IconData icon, String sub, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(15),
+      child: Container(
+        padding: const EdgeInsets.all(15),
+        decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade200), borderRadius: BorderRadius.circular(15)),
+        child: Row(
+          children: [
+            Icon(icon, color: const Color(0xFF0F5B44)),
+            const SizedBox(width: 15),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontWeight: FontWeight.bold)), Text(sub, style: const TextStyle(fontSize: 11, color: Colors.grey))])),
+            const Icon(Icons.chevron_right, size: 18, color: Colors.grey),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRecentRecordsSection() {
+    return FutureBuilder(
+      future: Future.wait([_api.getObligations(), _api.getFunds()]),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const SizedBox.shrink();
+        final obligations = snapshot.data![0] as List;
+        final funds = snapshot.data![1] as List;
+
+        if (obligations.isEmpty && funds.isEmpty) return const SizedBox.shrink();
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Recent Insights", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E))),
+            const SizedBox(height: 15),
+            if (obligations.isNotEmpty) ...[
+              const Text("Obligations", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black45)),
+              const SizedBox(height: 8),
+              ...obligations.take(3).map((o) => _buildRecordItem(o, Colors.red.shade700)).toList(),
+              const SizedBox(height: 15),
+            ],
+            if (funds.isNotEmpty) ...[
+              const Text("Operating Funds", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black45)),
+              const SizedBox(height: 8),
+              ...funds.take(3).map((f) => _buildRecordItem(f, const Color(0xFF0F5B44))).toList(),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  // ── Overview Tab ───────────────────────────────────────────────────────────
 
   Widget _buildOverviewTab() {
     return Column(
@@ -54,51 +651,58 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: Container(
             width: double.infinity,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.92),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(35),
-                topRight: Radius.circular(35),
-              ),
+              color: Colors.white.withOpacity(0.94),
+              borderRadius: const BorderRadius.only(topLeft: Radius.circular(35), topRight: Radius.circular(35)),
             ),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(25),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildSummarySection(),
-                  const SizedBox(height: 30),
-                  _buildForecastSection(),
-                  const SizedBox(height: 30),
-                  _buildCriticalAlerts(),
-                  const SizedBox(height: 30),
-                  _buildRecentHistory(),
-                  const SizedBox(height: 100),
-                ],
-              ),
-            ),
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator(color: Color(0xFF0F5B44)))
+                : _error != null
+                    ? _buildErrorView()
+                    : RefreshIndicator(
+                        onRefresh: _loadDashboard,
+                        color: const Color(0xFF0F5B44),
+                        child: SingleChildScrollView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.all(25),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildSummaryCards(),
+                              const SizedBox(height: 25),
+                              _buildHealthSection(),
+                              const SizedBox(height: 25),
+                              _buildRiskSection(),
+                              const SizedBox(height: 25),
+                              _buildRecommendationCard(),
+                              const SizedBox(height: 35),
+                              _buildRecentRecordsSection(),
+                              const SizedBox(height: 120),
+                            ],
+                          ),
+                        ),
+                      ),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildPlaceholderTab(String title) {
+  Widget _buildErrorView() {
     return Center(
-      child: Container(
-        margin: const EdgeInsets.all(30),
+      child: Padding(
         padding: const EdgeInsets.all(40),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.9),
-          borderRadius: BorderRadius.circular(30),
-        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.construction, size: 50, color: Color(0xFF0F5B44)),
+            const Icon(Icons.cloud_off, size: 50, color: Colors.grey),
             const SizedBox(height: 20),
-            Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            const Text("Under Development", style: TextStyle(color: Colors.grey)),
+            Text(_error ?? "Something went wrong", textAlign: TextAlign.center, style: const TextStyle(color: Colors.black54)),
+            const SizedBox(height: 25),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F5B44)),
+              onPressed: _loadDashboard,
+              child: const Text("Retry", style: TextStyle(color: Colors.white)),
+            ),
           ],
         ),
       ),
@@ -117,148 +721,446 @@ class _DashboardScreenState extends State<DashboardScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: const [
                 Text("Welcome Back,", style: TextStyle(color: Colors.white70, fontSize: 14)),
-                Text("Finance Manager", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+                Text("CapitalSense", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
               ],
             ),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(15),
+            GestureDetector(
+              onTap: _loadDashboard,
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(15)),
+                child: const Icon(Icons.refresh, color: Colors.white),
               ),
-              child: const Icon(Icons.notifications_active, color: Colors.white),
-            )
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildSummarySection() {
-    return Row(
+  // ── Summary Cards ──────────────────────────────────────────────────────────
+
+  Widget _buildSummaryCards() {
+    final fs = _dashboardData?['financial_state'] ?? {};
+    final balance = (fs['available_balance'] as num?)?.toDouble() ?? 0;
+    final cash = (fs['available_cash'] as num?)?.toDouble() ?? 0;
+    final payablesTotal = (fs['total_payables'] as num?)?.toDouble() ?? 0;
+    final receivablesTotal = (fs['total_receivables'] as num?)?.toDouble() ?? 0;
+
+    return Column(
       children: [
-        Expanded(
-          flex: 2,
-          child: _buildMetricCard("TOTAL CASH", "₹ 12.45L", Icons.account_balance_wallet, const Color(0xFF0F5B44)),
+        Row(
+          children: [
+            Expanded(child: _buildLiveMetricCard("BALANCE", _formatCurrency(balance), Icons.account_balance_wallet, const Color(0xFF0F5B44))),
+            const SizedBox(width: 12),
+            Expanded(child: _buildLiveMetricCard("AVAILABLE", _formatCurrency(cash), Icons.monetization_on, const Color(0xFF1B7A5A))),
+          ],
         ),
-        const SizedBox(width: 15),
-        Expanded(
-          flex: 1,
-          child: _buildMetricCard("RUNWAY", "4.2mo", Icons.timer, Colors.orange.shade800),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(child: _buildLiveMetricCard("RECEIVABLES (TOTAL)", _formatCurrency(receivablesTotal), Icons.arrow_downward, Colors.blue.shade700)),
+            const SizedBox(width: 12),
+            Expanded(child: _buildLiveMetricCard("PAYABLES (TOTAL)", _formatCurrency(payablesTotal), Icons.arrow_upward, Colors.red.shade700)),
+          ],
         ),
       ],
     );
   }
 
-  Widget _buildMetricCard(String label, String value, IconData icon, Color color) {
+  Widget _buildLiveMetricCard(String label, String value, IconData icon, Color color) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(25),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          )
-        ],
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: [BoxShadow(color: color.withOpacity(0.08), blurRadius: 12, offset: const Offset(0, 4))],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, color: color, size: 18),
-              const SizedBox(width: 8),
-              Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black54)),
+              Icon(icon, color: color, size: 16),
+              const SizedBox(width: 6),
+              Flexible(child: Text(label, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.black45, letterSpacing: 0.8))),
             ],
           ),
-          const SizedBox(height: 12),
-          Text(value, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: color)),
+          const SizedBox(height: 10),
+          FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text(value, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color))),
         ],
       ),
     );
   }
 
-  Widget _buildForecastSection() {
+  // ── Health Section ─────────────────────────────────────────────────────────
+
+  Widget _buildHealthSection() {
+    final fs = _dashboardData?['financial_state'] ?? {};
+    final healthScore = (fs['health_score'] as num?)?.toInt() ?? 0;
+    final runway = fs['cash_runway_days'];
+    final pressure = (fs['obligation_pressure_ratio'] as num?)?.toDouble() ?? 0;
+    final bufferDays = (fs['buffer_sufficiency_days'] as num?)?.toDouble();
+    final flags = fs['status_flags'] as Map<String, dynamic>? ?? {};
+
+    Color healthColor = healthScore >= 70
+        ? const Color(0xFF0F5B44)
+        : healthScore >= 40
+            ? Colors.orange.shade800
+            : Colors.red.shade700;
+
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(25),
+        boxShadow: [BoxShadow(color: healthColor.withOpacity(0.08), blurRadius: 15, offset: const Offset(0, 4))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text("Financial Health", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E))),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(color: healthColor.withOpacity(0.1), borderRadius: BorderRadius.circular(20)),
+                child: Text("$healthScore / 100", style: TextStyle(fontWeight: FontWeight.bold, color: healthColor, fontSize: 14)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: LinearProgressIndicator(
+              value: healthScore / 100.0,
+              backgroundColor: Colors.grey.shade200,
+              color: healthColor,
+              minHeight: 10,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Expanded(child: _buildMiniStat("Runway", runway != null ? "$runway days" : "Stable", Icons.timer)),
+              Expanded(child: _buildMiniStat("Pressure", "${(pressure * 100).toStringAsFixed(0)}%", Icons.speed)),
+              Expanded(child: _buildMiniStat("Buffer", bufferDays != null ? "${bufferDays.toStringAsFixed(0)}d" : "—", Icons.shield)),
+            ],
+          ),
+          if (flags.entries.any((e) => e.value == true)) ...[
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: flags.entries.where((e) => e.value == true).map((e) {
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(12)),
+                  child: Text(
+                    e.key.replaceAll('_', ' ').toUpperCase(),
+                    style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.red.shade700),
+                  ),
+                );
+              }).toList(),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMiniStat(String label, String value, IconData icon) {
+    return Column(
+      children: [
+        Icon(icon, size: 18, color: const Color(0xFF0F5B44)),
+        const SizedBox(height: 4),
+        Text(value, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+        Text(label, style: const TextStyle(fontSize: 10, color: Colors.black45)),
+      ],
+    );
+  }
+
+  // ── Risk Detection Section ─────────────────────────────────────────────────
+
+  Widget _buildRiskSection() {
+    final risk = _dashboardData?['risk_detection'];
+    if (risk == null) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text("Risk Projections", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E))),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(child: _buildRiskCard("Best", risk['best_case'])),
+            const SizedBox(width: 8),
+            Expanded(child: _buildRiskCard("Base", risk['base_case'])),
+            const SizedBox(width: 8),
+            Expanded(child: _buildRiskCard("Worst", risk['worst_case'])),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRiskCard(String label, Map<String, dynamic>? proj) {
+    if (proj == null) return const SizedBox.shrink();
+    final severity = proj['risk_severity']?.toString() ?? 'unknown';
+    final minCash = (proj['minimum_cash_amount'] as num?)?.toDouble();
+    final shortfall = proj['days_to_shortfall'];
+
+    Color sevColor;
+    IconData sevIcon;
+    switch (severity.toLowerCase()) {
+      case 'safe':
+        sevColor = const Color(0xFF0F5B44);
+        sevIcon = Icons.check_circle;
+        break;
+      case 'warning':
+        sevColor = Colors.orange;
+        sevIcon = Icons.warning;
+        break;
+      case 'critical':
+      case 'danger':
+        sevColor = Colors.red;
+        sevIcon = Icons.dangerous;
+        break;
+      default:
+        sevColor = Colors.grey;
+        sevIcon = Icons.help;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: sevColor.withOpacity(0.3)),
+        boxShadow: [BoxShadow(color: sevColor.withOpacity(0.05), blurRadius: 8)],
+      ),
+      child: Column(
+        children: [
+          Text(label.toUpperCase(), style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, letterSpacing: 1, color: Colors.grey.shade600)),
+          const SizedBox(height: 8),
+          Icon(sevIcon, color: sevColor, size: 26),
+          const SizedBox(height: 6),
+          Text(severity.toUpperCase(), style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: sevColor)),
+          if (minCash != null) ...[
+            const SizedBox(height: 4),
+            Text(_formatCurrency(minCash), style: const TextStyle(fontSize: 10, color: Colors.black45)),
+          ],
+          if (shortfall != null) ...[
+            Text("${shortfall}d", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: sevColor)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ── Recommendation Card ────────────────────────────────────────────────────
+
+  Widget _buildRecommendationCard() {
+    final decisions = _dashboardData?['decisions'];
+    if (decisions == null) return const SizedBox.shrink();
+
+    final baseCase = decisions['base_case'];
+    final strategy = baseCase?['recommended_strategy'] ?? 'N/A';
+    final reasoning = baseCase?['reasoning'] ?? '';
+    final balanced = baseCase?['balanced'];
+    final totalPay = (balanced?['total_payment'] as num?)?.toDouble() ?? 0;
+    final cashAfter = (balanced?['estimated_cash_after'] as num?)?.toDouble() ?? 0;
+    final survival = (balanced?['survival_probability'] as num?)?.toDouble() ?? 0;
+
+    Color stratColor;
+    switch (strategy.toUpperCase()) {
+      case 'AGGRESSIVE':
+        stratColor = Colors.red.shade600;
+        break;
+      case 'CONSERVATIVE':
+        stratColor = Colors.blue.shade700;
+        break;
+      default:
+        stratColor = const Color(0xFF0F5B44);
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [stratColor.withOpacity(0.05), Colors.white], begin: Alignment.topLeft, end: Alignment.bottomRight),
+        borderRadius: BorderRadius.circular(25),
+        border: Border.all(color: stratColor.withOpacity(0.2)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.lightbulb, color: stratColor, size: 20),
+              const SizedBox(width: 8),
+              const Text("AI Recommendation", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E))),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(color: stratColor.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+            child: Text(strategy, style: TextStyle(fontWeight: FontWeight.bold, color: stratColor, fontSize: 13, letterSpacing: 1)),
+          ),
+          const SizedBox(height: 12),
+          Text(reasoning, style: const TextStyle(fontSize: 12, color: Colors.black54, height: 1.4)),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildRecommendStat("Pay Now", _formatCurrency(totalPay), stratColor),
+              _buildRecommendStat("Cash After", _formatCurrency(cashAfter), const Color(0xFF0F5B44)),
+              _buildRecommendStat("Survival", "${survival.toStringAsFixed(0)}%", Colors.blue.shade700),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecommendStat(String label, String value, Color color) {
+    return Column(
+      children: [
+        Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: color)),
+        const SizedBox(height: 2),
+        Text(label, style: const TextStyle(fontSize: 9, color: Colors.black45)),
+      ],
+    );
+  }
+
+  // ── Records Tab ────────────────────────────────────────────────────────────
+
+  Widget _buildRecordsTab() {
+    return Column(
+      children: [
+        SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 20),
+            child: Row(children: const [
+              Icon(Icons.receipt_long, color: Colors.white, size: 26),
+              SizedBox(width: 12),
+              Text("Audit & Records", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+            ]),
+          ),
+        ),
+        Expanded(
+          child: Container(
+            width: double.infinity,
+            decoration: BoxDecoration(color: Colors.white.withOpacity(0.94), borderRadius: const BorderRadius.only(topLeft: Radius.circular(35), topRight: Radius.circular(35))),
+            child: FutureBuilder(
+              future: Future.wait([_api.getObligations(), _api.getReceivables(), _api.getFunds()]),
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator(color: Color(0xFF0F5B44)));
+                }
+                final obligations = snapshot.data![0] as List;
+                final receivables = snapshot.data![1] as List;
+                final funds = snapshot.data![2] as List;
+
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.all(25),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildRecordSection("Obligations", obligations, Colors.red.shade700, Icons.arrow_upward),
+                      const SizedBox(height: 20),
+                      _buildRecordSection("Receivables", receivables, Colors.blue.shade700, Icons.arrow_downward),
+                      const SizedBox(height: 20),
+                      _buildRecordSection("Funds", funds, const Color(0xFF0F5B44), Icons.account_balance),
+                      const SizedBox(height: 80),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRecordSection(String title, List items, Color color, IconData icon) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text("30-Day Forecast", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E))),
-            TextButton(onPressed: () {}, child: const Text("View Full", style: TextStyle(color: Color(0xFF0F5B44)))),
+            Icon(icon, color: color, size: 18),
+            const SizedBox(width: 8),
+            Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color)),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+              child: Text("${items.length}", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+            ),
           ],
         ),
-        Container(
-          height: 180,
-          width: double.infinity,
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(25)),
-          child: const Center(child: Icon(Icons.show_chart, size: 40, color: Color(0xFF0B3B2E))),
-        ),
+        const SizedBox(height: 10),
+        if (items.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(15)),
+            child: Center(child: Text("No $title yet", style: const TextStyle(color: Colors.black38))),
+          )
+        else
+          ...items.take(5).map((item) => _buildRecordItem(item, color)).toList(),
       ],
     );
   }
 
-  Widget _buildCriticalAlerts() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text("Critical Obligations", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E))),
-        const SizedBox(height: 15),
-        _buildAlertItem("Office Rent - May", "7 Days Late", "₹ 45,000", Colors.red),
-        _buildAlertItem("Employee Salaries", "Due in 3 Days", "₹ 2,40,000", Colors.orange),
-      ],
-    );
-  }
+  Widget _buildRecordItem(Map<String, dynamic> item, Color color) {
+    final desc = item['description'] ?? item['client_name'] ?? item['source_name'] ?? 'Item';
+    final amount = (item['amount'] as num?)?.toDouble() ?? 0;
+    final status = item['status'] ?? '';
+    final dueDate = item['due_date'] ?? item['date_received'] ?? '';
 
-  Widget _buildAlertItem(String title, String status, String amount, Color statusColor) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(18),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: statusColor.withOpacity(0.2)),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: Colors.grey.shade100),
       ),
       child: Row(
         children: [
-          CircleAvatar(backgroundColor: statusColor.withOpacity(0.1), child: Icon(Icons.warning, color: statusColor, size: 18)),
-          const SizedBox(width: 15),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(title, style: const TextStyle(fontWeight: FontWeight.bold)), Text(status, style: TextStyle(color: statusColor, fontSize: 12))])),
-          Text(amount, style: const TextStyle(fontWeight: FontWeight.bold)),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(desc, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    if (status.isNotEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(6)),
+                        child: Text(status, style: TextStyle(fontSize: 9, color: color, fontWeight: FontWeight.bold)),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    Text(dueDate, style: const TextStyle(fontSize: 10, color: Colors.black45)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Text(_formatCurrency(amount), style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 13)),
         ],
       ),
     );
   }
 
-  Widget _buildRecentHistory() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text("Recent Activity", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E))),
-        const SizedBox(height: 15),
-        _buildHistoryItem("Vendor Payment", "Reliance Ind.", "₹ 1,20,000", Colors.green),
-        _buildHistoryItem("Tax Submission", "TXN#2291", "- ₹ 12,400", Colors.grey),
-      ],
-    );
-  }
-
-  Widget _buildHistoryItem(String type, String sub, String val, Color color) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 15),
-      child: Row(
-        children: [
-          Icon(val.contains("-") ? Icons.arrow_upward : Icons.arrow_downward, color: color, size: 20),
-          const SizedBox(width: 15),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(type, style: const TextStyle(fontWeight: FontWeight.bold)), Text(sub, style: const TextStyle(color: Colors.black54, fontSize: 12))])),
-          Text(val, style: TextStyle(fontWeight: FontWeight.bold, color: val.contains("-") ? Colors.black : Colors.green)),
-        ],
-      ),
-    );
-  }
+  // ── Bottom Nav ─────────────────────────────────────────────────────────────
 
   Widget _buildBottomNav() {
     return BottomAppBar(
@@ -271,7 +1173,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             _navItem(Icons.dashboard, "Dashboard", 0),
             _navItem(Icons.analytics, "Strategy", 1),
             const SizedBox(width: 40),
-            _navItem(Icons.receipt_long, "Audit", 2),
+            _navItem(Icons.receipt_long, "Records", 2),
             _navItem(Icons.settings, "Admin", 3),
           ],
         ),
@@ -290,17 +1192,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, color: isSelected ? const Color(0xFF0F5B44) : Colors.grey, size: 24),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 10,
-                color: isSelected ? const Color(0xFF0F5B44) : Colors.grey,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal
-              ),
-            ),
+            Text(label, style: TextStyle(fontSize: 10, color: isSelected ? const Color(0xFF0F5B44) : Colors.grey, fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
           ],
         ),
       ),
     );
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  String _formatCurrency(double amount) {
+    if (amount >= 10000000) return "₹${(amount / 10000000).toStringAsFixed(1)}Cr";
+    if (amount >= 100000) return "₹${(amount / 100000).toStringAsFixed(1)}L";
+    if (amount >= 1000) return "₹${(amount / 1000).toStringAsFixed(1)}K";
+    return "₹${amount.toStringAsFixed(0)}";
   }
 }

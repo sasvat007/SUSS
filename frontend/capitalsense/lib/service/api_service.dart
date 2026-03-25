@@ -21,6 +21,15 @@ class ApiService {
     await _storage.delete(key: 'refresh_token');
   }
 
+  Future<Map<String, String>> _authHeaders() async {
+    final token = await getAccessToken();
+    return {
+      "Content-Type": "application/json",
+      "accept": "application/json",
+      "Authorization": "Bearer $token",
+    };
+  }
+
   // ── Auth Methods ───────────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> login(String email, String password) async {
@@ -36,7 +45,7 @@ class ApiService {
       return data;
     } else {
       _handleError(response, "Login failed");
-      return {}; 
+      return {};
     }
   }
 
@@ -69,7 +78,7 @@ class ApiService {
       return data;
     } else {
       _handleError(response, "Signup failed");
-      return {}; 
+      return {};
     }
   }
 
@@ -111,14 +120,8 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getProfile() async {
-    final accessToken = await getAccessToken();
-    final response = await http.get(
-      Uri.parse("$baseUrl/auth/me"),
-      headers: {
-        "accept": "application/json",
-        "Authorization": "Bearer $accessToken"
-      },
-    );
+    final headers = await _authHeaders();
+    final response = await http.get(Uri.parse("$baseUrl/auth/me"), headers: headers);
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
@@ -128,23 +131,177 @@ class ApiService {
     }
   }
 
+  // ── Dashboard (Engine Analysis) ───────────────────────────────────────────
+
+  Future<Map<String, dynamic>> getDashboardSummary() async {
+    final headers = await _authHeaders();
+    final response = await http.get(
+      Uri.parse("$baseUrl/dashboard/summary"),
+      headers: headers,
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      _handleError(response, "Failed to load dashboard");
+      return {};
+    }
+  }
+
+  // ── Obligations ───────────────────────────────────────────────────────────
+
+  Future<List<dynamic>> getObligations() async {
+    final headers = await _authHeaders();
+    final response = await http.get(Uri.parse("$baseUrl/obligations"), headers: headers);
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      _handleError(response, "Failed to load obligations");
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>> createObligation({
+    required String description,
+    required double amount,
+    required String dueDate,
+    String? vendorId,
+    String? vendorName,
+  }) async {
+    final headers = await _authHeaders();
+    final body = {
+      "description": description,
+      "amount": amount,
+      "due_date": dueDate,
+    };
+    if (vendorId != null) body["vendor_id"] = vendorId;
+    if (vendorName != null) body["vendor_name"] = vendorName;
+    final response = await http.post(
+      Uri.parse("$baseUrl/obligations"),
+      headers: headers,
+      body: jsonEncode(body),
+    );
+    if (response.statusCode == 201) {
+      return jsonDecode(response.body);
+    } else {
+      _handleError(response, "Failed to create obligation");
+      return {};
+    }
+  }
+
+  // ── Receivables ───────────────────────────────────────────────────────────
+
+  Future<List<dynamic>> getReceivables() async {
+    final headers = await _authHeaders();
+    final response = await http.get(Uri.parse("$baseUrl/receivables"), headers: headers);
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      _handleError(response, "Failed to load receivables");
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>> createReceivable({
+    required String clientName,
+    required double amount,
+    required String dueDate,
+    String? description,
+  }) async {
+    final headers = await _authHeaders();
+    final response = await http.post(
+      Uri.parse("$baseUrl/receivables"),
+      headers: headers,
+      body: jsonEncode({
+        "client_name": clientName,
+        "amount": amount,
+        "due_date": dueDate,
+        "description": description,
+      }),
+    );
+    if (response.statusCode == 201) {
+      return jsonDecode(response.body);
+    } else {
+      _handleError(response, "Failed to create receivable");
+      return {};
+    }
+  }
+
+  // ── Funds ─────────────────────────────────────────────────────────────────
+
+  Future<List<dynamic>> getFunds() async {
+    final headers = await _authHeaders();
+    final response = await http.get(Uri.parse("$baseUrl/funds"), headers: headers);
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      _handleError(response, "Failed to load funds");
+      return [];
+    }
+  }
+
+  Future<Map<String, dynamic>> createFund({
+    required String sourceName,
+    required double amount,
+    required String dateReceived,
+    String? notes,
+  }) async {
+    final headers = await _authHeaders();
+    final response = await http.post(
+      Uri.parse("$baseUrl/funds"),
+      headers: headers,
+      body: jsonEncode({
+        "source_name": sourceName,
+        "amount": amount,
+        "date_received": dateReceived,
+        "notes": notes,
+      }),
+    );
+    if (response.statusCode == 201) {
+      return jsonDecode(response.body);
+    } else {
+      _handleError(response, "Failed to add fund");
+      return {};
+    }
+  }
+
+  // ── Scenario Simulation ───────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> simulateScenario({
+    double? balance,
+    String riskLevel = "MODERATE",
+    double? minCashBuffer,
+    int? timeHorizonDays,
+  }) async {
+    final headers = await _authHeaders();
+    final scenario = <String, dynamic>{"risk_level": riskLevel};
+    if (balance != null) scenario["balance"] = balance;
+    if (minCashBuffer != null) scenario["min_cash_buffer"] = minCashBuffer;
+    if (timeHorizonDays != null) scenario["time_horizon_days"] = timeHorizonDays;
+
+    final response = await http.post(
+      Uri.parse("$baseUrl/scenario/simulate"),
+      headers: headers,
+      body: jsonEncode({"scenario": scenario}),
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      _handleError(response, "Simulation failed");
+      return {};
+    }
+  }
+
   // ── Questionnaire Methods ──────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> checkQuestionnaireDue() async {
-    final accessToken = await getAccessToken();
-    final response = await http.get(
-      Uri.parse("$baseUrl/questionnaire/due"),
-      headers: {
-        "accept": "application/json",
-        "Authorization": "Bearer $accessToken"
-      },
-    );
+    final headers = await _authHeaders();
+    final response = await http.get(Uri.parse("$baseUrl/questionnaire/due"), headers: headers);
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
     } else {
       _handleError(response, "Failed to check questionnaire status");
-      return {}; 
+      return {};
     }
   }
 
@@ -154,14 +311,10 @@ class ApiService {
     required int paymentDelayTolerance,
     required List<String> nonNegotiableObligations,
   }) async {
-    final accessToken = await getAccessToken();
+    final headers = await _authHeaders();
     final response = await http.post(
       Uri.parse("$baseUrl/questionnaire/submit"),
-      headers: {
-        "Content-Type": "application/json",
-        "accept": "application/json",
-        "Authorization": "Bearer $accessToken"
-      },
+      headers: headers,
       body: jsonEncode({
         "min_safety_buffer": minSafetyBuffer,
         "partial_payments_allowed": partialPaymentsAllowed,
@@ -174,7 +327,28 @@ class ApiService {
       return jsonDecode(response.body);
     } else {
       _handleError(response, "Submission failed");
-      return {}; 
+      return {};
+    }
+  }
+
+  // ── OCR ───────────────────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> uploadOcr(String filePath) async {
+    final token = await getAccessToken();
+    final request = http.MultipartRequest('POST', Uri.parse("$baseUrl/ocr/upload"));
+    request.headers.addAll({
+      "Authorization": "Bearer $token",
+    });
+    request.files.add(await http.MultipartFile.fromPath('file', filePath));
+    
+    final streamedResponse = await request.send();
+    final response = await http.Response.fromStream(streamedResponse);
+
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      _handleError(response, "OCR extraction failed");
+      return {};
     }
   }
 
@@ -191,6 +365,7 @@ class ApiService {
       }
       throw Exception(errorMessage);
     } catch (e) {
+      if (e is Exception) rethrow;
       throw Exception(defaultMsg);
     }
   }

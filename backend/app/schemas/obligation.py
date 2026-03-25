@@ -6,6 +6,7 @@ from app.models.obligation import ObligationStatus
 
 class ObligationCreate(BaseModel):
     vendor_id: Optional[str] = None
+    vendor_name: Optional[str] = None
     description: Optional[str] = None
     amount: float = Field(..., gt=0)
     due_date: date

@@ -21,4 +21,4 @@ async def upload_document(
     The file is DELETED immediately after extraction.
     Data is NOT saved to DB — frontend must confirm then call the correct resource API.
     """
-    return await ocr_service.extract_from_upload(file, current_user.id, db)
+    return await ocr_service.extract_from_upload(file, current_user, db)

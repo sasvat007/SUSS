@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     # Rate Limiting
     RATE_LIMIT_PER_MINUTE: int = 60
 
+    # Fallback Data
+    DEFAULT_BANK_BALANCE: float = 50000.0
+
     class Config:
         env_file = ".env"
         case_sensitive = True
