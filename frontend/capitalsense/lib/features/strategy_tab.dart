@@ -346,7 +346,6 @@ class _StrategyTabState extends State<StrategyTab> with SingleTickerProviderStat
         statusIcon = Icons.help;
     }
 
-    return Container(
     final isTax = vendorName.toUpperCase().contains('GST') || 
                   vendorName.toUpperCase().contains('TAX') || 
                   vendorName.toUpperCase().contains('TDS') ||
