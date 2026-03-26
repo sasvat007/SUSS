@@ -1,0 +1,192 @@
+{
+  "name": "Email creation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "47f07c2a-8146-455f-9beb-b7fedcaa314f",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "bcb60f6a-305f-445c-902d-360401cd173d",
+      "name": "Webhook",
+      "webhookId": "47f07c2a-8146-455f-9beb-b7fedcaa314f"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Draft a deferral email for {{ $json.body.vendor_name }} regarding the amount of {{ $json.body.amount }} due on {{ $json.body.due_date }}. The new proposed date is {{ $json.body.proposed_date }}. Use the Postgres Tool to look up their confidence score so you can set the correct tone.",
+        "options": {
+          "systemMessage": "You are the CapitalSense Financial Assistant. Your only goal is to draft professional deferral emails.\n\nMANDATORY: If a vendor name is provided, you MUST use the Postgres Tool to fetch the confidence_score.\n\nTone Logic: 80+ (Partnership), 40-79 (Professional), <40 (Formal).\n\nFormat: Output the Subject and the Body. Do not ask questions or give generic templates."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        208,
+        0
+      ],
+      "id": "3c60481b-b4a2-44e9-b9b8-8057c55bd336",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Use this tool to look up a vendor's trust score, relationship type, and contact details by their name. Use this before drafting any email or making a payment recommendation.",
+        "operation": "executeQuery",
+        "query": "SELECT vendor_name, confidence_score, relationship_type, contact_email \nFROM vendors \nWHERE vendor_name % '{{ $fromAI(\"vendor_name\", \"The name of the vendor to look up\") }}'\nORDER BY similarity(vendor_name, '{{ $fromAI(\"vendor_name\", \"The name of the vendor to look up\") }}') DESC \nLIMIT 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.6,
+      "position": [
+        368,
+        208
+      ],
+      "id": "141d67ff-0474-453a-9977-4e50e641bf00",
+      "name": "Execute a SQL query in Postgres",
+      "credentials": {
+        "postgres": {
+          "id": "6I5KwkAysSkvxwem",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"draft\": $json.output } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        560,
+        0
+      ],
+      "id": "867df4aa-6ee8-484f-8bf0-fb060ae03f77",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-flash-latest",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        80,
+        208
+      ],
+      "id": "bf37afe8-63f6-4045-8a68-9d0f5fa96990",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "7jcf3qO4umBMyrh5",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "contact@sasvat.me",
+        "subject": "TEST",
+        "emailType": "text",
+        "message": "={{ $json.output }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        704,
+        144
+      ],
+      "id": "d877cf23-a078-4a75-81e9-2c18462abf48",
+      "name": "Send a message",
+      "webhookId": "5841267e-49f3-4340-8ea8-115210629c3d",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "NHluLPu2Gj8IJOZP",
+          "name": "Gmail account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a SQL query in Postgres": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "ae4e138a-ffa7-479a-845a-7e9ab9ad1e59",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "5122cce1250042916875361f7336f255fc4ede2832b694522f16cec138e050aa"
+  },
+  "id": "tSM5BgUt6aLuBmCC",
+  "tags": []
+}
