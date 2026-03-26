@@ -54,3 +54,13 @@ async def delete(
     db: AsyncSession = Depends(get_db),
 ):
     await obligation_service.soft_delete(ob_id, current_user, db)
+
+
+@router.patch("/{ob_id}/defer", response_model=ObligationOut)
+async def defer_obligation(
+    ob_id: str,
+    days: int = 30,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await obligation_service.defer_obligation(ob_id, days, current_user, db)

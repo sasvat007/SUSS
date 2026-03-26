@@ -411,6 +411,20 @@ class ApiService {
     }
   }
 
+  Future<Map<String, dynamic>> deferObligation(String obligationId, {int days = 30}) async {
+    final headers = await _authHeaders();
+    final response = await http.patch(
+      Uri.parse("$baseUrl/obligations/$obligationId/defer?days=$days"),
+      headers: headers,
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      _handleError(response, "Failed to defer obligation");
+      return {};
+    }
+  }
+
   void _handleError(http.Response response, String defaultMsg) {
     try {
       final decoded = jsonDecode(response.body);

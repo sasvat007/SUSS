@@ -5,7 +5,8 @@ import 'package:capitalsense/service/api_service.dart';
 
 class StrategyTab extends StatefulWidget {
   final Map<String, dynamic>? dashboardData;
-  const StrategyTab({super.key, this.dashboardData});
+  final Function()? onRefresh;
+  const StrategyTab({super.key, this.dashboardData, this.onRefresh});
 
   @override
   State<StrategyTab> createState() => _StrategyTabState();
@@ -239,7 +240,6 @@ class _StrategyTabState extends State<StrategyTab> with SingleTickerProviderStat
     final strategies = [
       {"key": "aggressive", "label": "Aggressive", "icon": Icons.flash_on, "color": Colors.red.shade600},
       {"key": "balanced", "label": "Balanced", "icon": Icons.balance, "color": const Color(0xFF0F5B44)},
-      {"key": "conservative", "label": "Conservative", "icon": Icons.shield, "color": Colors.blue.shade700},
     ];
 
     final recommended = (scenario['recommended_strategy'] ?? '').toString().toUpperCase();
@@ -399,40 +399,60 @@ class _StrategyTabState extends State<StrategyTab> with SingleTickerProviderStat
             const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerRight,
-              child: GestureDetector(
-                onTap: () => _showDeferralDialog(
-                  vendorName: vendorName,
-                  amount: payAmount,
-                  dueDate: dueDate,
-                ),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF6B3FA0), Color(0xFF9B5DE5)],
+              child: status.toLowerCase() == 'deferred' 
+                ? Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF6B3FA0).withOpacity(0.3),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Icon(Icons.check_circle_outline, size: 12, color: Colors.black38),
+                        SizedBox(width: 5),
+                        Text(
+                          "Email Sent",
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black38),
+                        ),
+                      ],
+                    ),
+                  )
+                : GestureDetector(
+                    onTap: () => _showDeferralDialog(
+                      obligationId: (d['obligation_id'] ?? '').toString(),
+                      vendorName: vendorName,
+                      amount: payAmount,
+                      dueDate: dueDate,
+                    ),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF6B3FA0), Color(0xFF9B5DE5)],
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(0xFF6B3FA0).withOpacity(0.3),
+                            blurRadius: 6,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(Icons.forward_to_inbox, size: 12, color: Colors.white),
-                      SizedBox(width: 5),
-                      Text(
-                        "Defer Payment",
-                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.3),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          Icon(Icons.forward_to_inbox, size: 12, color: Colors.white),
+                          SizedBox(width: 5),
+                          Text(
+                            "Defer Payment",
+                            style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.3),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
             ),
           ],
         ],
@@ -443,6 +463,7 @@ class _StrategyTabState extends State<StrategyTab> with SingleTickerProviderStat
   // ── Deferral Dialog & Webhook ───────────────────────────────────────────────
 
   Future<void> _showDeferralDialog({
+    required String obligationId,
     required String vendorName,
     required double amount,
     required String dueDate,
@@ -517,6 +538,7 @@ class _StrategyTabState extends State<StrategyTab> with SingleTickerProviderStat
     if (confirmed != true) return;
 
     await _sendDeferral(
+      obligationId: obligationId,
       vendorName: vendorCtrl.text.trim(),
       amount: double.tryParse(amountCtrl.text.trim()) ?? 0,
       dueDate: dueDateCtrl.text.trim(),
@@ -551,6 +573,7 @@ class _StrategyTabState extends State<StrategyTab> with SingleTickerProviderStat
   }
 
   Future<void> _sendDeferral({
+    required String obligationId,
     required String vendorName,
     required double amount,
     required String dueDate,
@@ -596,24 +619,26 @@ class _StrategyTabState extends State<StrategyTab> with SingleTickerProviderStat
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        dynamic decoded;
+        // Now update the obligation status to deferred in our backend
         try {
-          decoded = jsonDecode(response.body);
-        } catch (_) {
-          decoded = null;
+          await _api.deferObligation(obligationId);
+          widget.onRefresh?.call();
+        } catch (e) {
+          debugPrint("Failed to update status: $e");
         }
-        String emailId = '';
-        if (decoded is List && decoded.isNotEmpty) {
-          emailId = decoded[0]['id']?.toString() ?? '';
-        } else if (decoded is Map) {
-          emailId = decoded['id']?.toString() ?? '';
-        }
-        _showSuccessBanner(emailId);
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Deferral email sent successfully!"),
+            backgroundColor: Color(0xFF0F5B44),
+          ),
+        );
+        _showSuccessBanner(obligationId);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Failed to send deferral (${response.statusCode}). Please try again."),
-            backgroundColor: Colors.red.shade700,
+            content: Text("Failed to send email: ${response.statusCode}"),
+            backgroundColor: Colors.red,
           ),
         );
       }
@@ -622,8 +647,8 @@ class _StrategyTabState extends State<StrategyTab> with SingleTickerProviderStat
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Error: ${e.toString()}"),
-          backgroundColor: Colors.red.shade700,
+          content: Text("Connection error: $e"),
+          backgroundColor: Colors.red,
         ),
       );
     }

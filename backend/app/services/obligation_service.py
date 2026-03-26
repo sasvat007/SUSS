@@ -112,6 +112,26 @@ async def mark_paid(
     )
 
 
+async def defer_obligation(
+    ob_id: str,
+    days: int,
+    user: User,
+    db: AsyncSession,
+) -> ObligationOut:
+    ob = await _fetch_or_404(ob_id, user.id, db)
+    
+    # Update due date and status
+    from datetime import timedelta
+    ob.due_date = ob.due_date + timedelta(days=days)
+    ob.status = ObligationStatus.deferred
+    
+    await db.flush()
+    await write_audit_log(db, "DEFER_OBLIGATION", user.id, "obligation", ob.id, 
+                          extra={"days": days, "new_due_date": ob.due_date.isoformat()})
+    
+    return ObligationOut.model_validate(ob)
+
+
 async def soft_delete(ob_id: str, user: User, db: AsyncSession) -> None:
     ob = await _fetch_or_404(ob_id, user.id, db)
     ob.deleted_at = datetime.now(timezone.utc)

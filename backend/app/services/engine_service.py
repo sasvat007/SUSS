@@ -79,6 +79,8 @@ async def run_full_analysis(user: User, db: AsyncSession) -> dict:
             financial_state=financial_state,
             payables=payables,
             receivables=receivables,
+            avg_payment_delay=business_ctx.avg_payment_delay_days,
+            min_buffer=business_ctx.min_cash_buffer,
         )
     except Exception as exc:
         logger.warning("Risk Detection Engine failed: %s", exc, exc_info=True)
@@ -136,16 +138,15 @@ async def _load_user_data(user: User, db: AsyncSession) -> dict:
     v_result = await db.execute(select(Vendor).where(Vendor.user_id == user.id))
     vendors = v_result.scalars().all()
 
-    # Calculate balance. If no funds recorded, fallback to a mock/default balance for dev.
-    calculated_balance = total_funds + total_received - total_paid
-    if calculated_balance == 0 and total_funds == 0:
-        balance = float(settings.DEFAULT_BANK_BALANCE)
-    else:
-        balance = calculated_balance
+    # Calculate balance. 
+    # Use the DEFAULT_BANK_BALANCE as the starting point for the demo/user.
+    initial_balance = float(settings.DEFAULT_BANK_BALANCE)
+    balance = initial_balance + total_funds + total_received - total_paid
 
     return {
         "balance": balance,
         "total_funds": total_funds,
+        "funds": funds,
         "obligations": obligations,
         "receivables": receivables,
         "vendors": vendors,
@@ -236,13 +237,15 @@ def _build_business_context(questionnaire: QuestionnaireResponse | None) -> Busi
     """Build BusinessContext from questionnaire answers or defaults."""
     if questionnaire:
         return BusinessContext(
-            min_cash_buffer=questionnaire.min_safety_buffer or 50000,
+            min_cash_buffer=questionnaire.min_safety_buffer or 50000.0,
             allow_partial_payments=questionnaire.partial_payments_allowed if questionnaire.partial_payments_allowed is not None else True,
+            avg_payment_delay_days=questionnaire.payment_delay_tolerance or 5,
             time_horizon_days=30,
         )
     return BusinessContext(
-        min_cash_buffer=50000,
+        min_cash_buffer=50000.0,
         allow_partial_payments=True,
+        avg_payment_delay_days=5,
         time_horizon_days=30,
     )
 
@@ -301,6 +304,29 @@ def _build_analysis_response(data: dict, fs, risk, decisions) -> dict:
             "buffer_sufficiency_days": _safe(fs.buffer_sufficiency_days, 999),
             "status_flags": fs.status_flags,
         },
+        "funds": [{
+            "id": f.id,
+            "source_name": f.source_name,
+            "amount": f.amount,
+            "date_received": f.date_received.isoformat() if hasattr(f.date_received, "isoformat") else str(f.date_received),
+            "notes": f.notes
+        } for f in data.get("funds", [])],
+        "obligations": [{
+            "id": o.id,
+            "description": o.description,
+            "amount": o.amount,
+            "amount_paid": o.amount_paid,
+            "due_date": o.due_date.isoformat() if hasattr(o.due_date, "isoformat") else str(o.due_date),
+            "status": o.status
+        } for o in data.get("obligations", [])],
+        "receivables": [{
+            "id": r.id,
+            "client_name": r.client_name,
+            "amount": r.amount,
+            "amount_received": r.amount_received,
+            "due_date": r.due_date.isoformat() if hasattr(r.due_date, "isoformat") else str(r.due_date),
+            "status": r.status
+        } for r in data.get("receivables", [])],
     }
 
     # Risk Detection (Engine 2)
