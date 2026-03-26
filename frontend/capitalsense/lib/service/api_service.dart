@@ -1,9 +1,23 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class ApiService {
-  static const String baseUrl = "http://localhost:8000/api/v1";
+  static const String _configuredBaseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: '',
+  );
+  static String get baseUrl {
+    if (_configuredBaseUrl.isNotEmpty) {
+      return _configuredBaseUrl;
+    }
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      return "http://10.0.2.2:8000/api/v1";
+    }
+    return "http://localhost:8000/api/v1";
+  }
+
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
   // ── Token Storage ──────────────────────────────────────────────────────────
@@ -13,8 +27,10 @@ class ApiService {
     await _storage.write(key: 'refresh_token', value: refreshToken);
   }
 
-  Future<String?> getAccessToken() async => await _storage.read(key: 'access_token');
-  Future<String?> getRefreshToken() async => await _storage.read(key: 'refresh_token');
+  Future<String?> getAccessToken() async =>
+      await _storage.read(key: 'access_token');
+  Future<String?> getRefreshToken() async =>
+      await _storage.read(key: 'refresh_token');
 
   Future<void> clearTokens() async {
     await _storage.delete(key: 'access_token');
@@ -35,7 +51,10 @@ class ApiService {
   Future<Map<String, dynamic>> login(String email, String password) async {
     final response = await http.post(
       Uri.parse("$baseUrl/auth/login"),
-      headers: {"Content-Type": "application/json", "accept": "application/json"},
+      headers: {
+        "Content-Type": "application/json",
+        "accept": "application/json",
+      },
       body: jsonEncode({"email": email, "password": password}),
     );
 
@@ -60,7 +79,10 @@ class ApiService {
   }) async {
     final response = await http.post(
       Uri.parse("$baseUrl/auth/signup"),
-      headers: {"Content-Type": "application/json", "accept": "application/json"},
+      headers: {
+        "Content-Type": "application/json",
+        "accept": "application/json",
+      },
       body: jsonEncode({
         "full_name": fullName,
         "email": email,
@@ -88,7 +110,10 @@ class ApiService {
 
     final response = await http.post(
       Uri.parse("$baseUrl/auth/refresh"),
-      headers: {"Content-Type": "application/json", "accept": "application/json"},
+      headers: {
+        "Content-Type": "application/json",
+        "accept": "application/json",
+      },
       body: jsonEncode({"refresh_token": refreshToken}),
     );
 
@@ -112,7 +137,7 @@ class ApiService {
       headers: {
         "Content-Type": "application/json",
         "accept": "application/json",
-        "Authorization": "Bearer $accessToken"
+        "Authorization": "Bearer $accessToken",
       },
       body: jsonEncode({"refresh_token": refreshToken}),
     );
@@ -121,7 +146,10 @@ class ApiService {
 
   Future<Map<String, dynamic>> getProfile() async {
     final headers = await _authHeaders();
-    final response = await http.get(Uri.parse("$baseUrl/auth/me"), headers: headers);
+    final response = await http.get(
+      Uri.parse("$baseUrl/auth/me"),
+      headers: headers,
+    );
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
@@ -151,7 +179,10 @@ class ApiService {
 
   Future<List<dynamic>> getObligations() async {
     final headers = await _authHeaders();
-    final response = await http.get(Uri.parse("$baseUrl/obligations"), headers: headers);
+    final response = await http.get(
+      Uri.parse("$baseUrl/obligations"),
+      headers: headers,
+    );
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
     } else {
@@ -188,7 +219,11 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> markObligationPaid(String obId, double amount, {bool isFull = true}) async {
+  Future<Map<String, dynamic>> markObligationPaid(
+    String obId,
+    double amount, {
+    bool isFull = true,
+  }) async {
     final headers = await _authHeaders();
     final body = {
       "payment_type": isFull ? "full" : "partial",
@@ -211,7 +246,10 @@ class ApiService {
 
   Future<List<dynamic>> getReceivables() async {
     final headers = await _authHeaders();
-    final response = await http.get(Uri.parse("$baseUrl/receivables"), headers: headers);
+    final response = await http.get(
+      Uri.parse("$baseUrl/receivables"),
+      headers: headers,
+    );
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
     } else {
@@ -245,7 +283,11 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> markReceivableReceived(String recId, double amount, {bool isFull = true}) async {
+  Future<Map<String, dynamic>> markReceivableReceived(
+    String recId,
+    double amount, {
+    bool isFull = true,
+  }) async {
     final headers = await _authHeaders();
     final body = {
       "payment_type": isFull ? "full" : "partial",
@@ -268,7 +310,10 @@ class ApiService {
 
   Future<List<dynamic>> getFunds() async {
     final headers = await _authHeaders();
-    final response = await http.get(Uri.parse("$baseUrl/funds"), headers: headers);
+    final response = await http.get(
+      Uri.parse("$baseUrl/funds"),
+      headers: headers,
+    );
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
     } else {
@@ -314,7 +359,8 @@ class ApiService {
     final scenario = <String, dynamic>{"risk_level": riskLevel};
     if (balance != null) scenario["balance"] = balance;
     if (minCashBuffer != null) scenario["min_cash_buffer"] = minCashBuffer;
-    if (timeHorizonDays != null) scenario["time_horizon_days"] = timeHorizonDays;
+    if (timeHorizonDays != null)
+      scenario["time_horizon_days"] = timeHorizonDays;
 
     final response = await http.post(
       Uri.parse("$baseUrl/scenario/simulate"),
@@ -333,7 +379,10 @@ class ApiService {
 
   Future<Map<String, dynamic>> checkQuestionnaireDue() async {
     final headers = await _authHeaders();
-    final response = await http.get(Uri.parse("$baseUrl/questionnaire/due"), headers: headers);
+    final response = await http.get(
+      Uri.parse("$baseUrl/questionnaire/due"),
+      headers: headers,
+    );
 
     if (response.statusCode == 200) {
       return jsonDecode(response.body);
@@ -373,12 +422,13 @@ class ApiService {
 
   Future<Map<String, dynamic>> uploadOcr(String filePath) async {
     final token = await getAccessToken();
-    final request = http.MultipartRequest('POST', Uri.parse("$baseUrl/ocr/upload"));
-    request.headers.addAll({
-      "Authorization": "Bearer $token",
-    });
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse("$baseUrl/ocr/upload"),
+    );
+    request.headers.addAll({"Authorization": "Bearer $token"});
     request.files.add(await http.MultipartFile.fromPath('file', filePath));
-    
+
     final streamedResponse = await request.send();
     final response = await http.Response.fromStream(streamedResponse);
 
@@ -391,6 +441,42 @@ class ApiService {
   }
 
   // ── Utils ──────────────────────────────────────────────────────────────────
+
+  Future<Map<String, dynamic>> createPaymentLink(
+    String obligationId,
+    double amount,
+  ) async {
+    final headers = await _authHeaders();
+    final body = {"obligation_id": obligationId, "amount": amount};
+    final response = await http.post(
+      Uri.parse("$baseUrl/payments/create"),
+      headers: headers,
+      body: jsonEncode(body),
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      _handleError(response, "Failed to create payment link");
+      return {};
+    }
+  }
+
+  Future<Map<String, dynamic>> deferObligation(
+    String obligationId, {
+    int days = 30,
+  }) async {
+    final headers = await _authHeaders();
+    final response = await http.patch(
+      Uri.parse("$baseUrl/obligations/$obligationId/defer?days=$days"),
+      headers: headers,
+    );
+    if (response.statusCode == 200) {
+      return jsonDecode(response.body);
+    } else {
+      _handleError(response, "Failed to defer obligation");
+      return {};
+    }
+  }
 
   void _handleError(http.Response response, String defaultMsg) {
     try {

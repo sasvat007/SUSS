@@ -11,6 +11,7 @@ class ObligationStatus(str, enum.Enum):
     overdue = "overdue"
     partially_paid = "partially_paid"
     paid = "paid"
+    deferred = "deferred"
 
 
 class Obligation(Base):

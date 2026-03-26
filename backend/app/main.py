@@ -26,6 +26,7 @@ from app.routers import (
     notifications,
     chatbot,
     email_draft,
+    payments,
 )
 
 logging.basicConfig(
@@ -102,6 +103,7 @@ app.include_router(scenario.router, prefix=API_PREFIX)
 app.include_router(notifications.router, prefix=API_PREFIX)
 app.include_router(chatbot.router, prefix=API_PREFIX)
 app.include_router(email_draft.router, prefix=API_PREFIX)
+app.include_router(payments.router, prefix=API_PREFIX)
 
 
 # ── Health check ──────────────────────────────────────────────────────────────

@@ -9,6 +9,7 @@ from typing import List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
+from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 
 from app.models.obligation import Obligation, ObligationStatus
@@ -85,6 +86,12 @@ async def mark_paid(
     if payload.amount > remaining + 0.01:
         raise HTTPException(status_code=400, detail="Payment exceeds remaining amount")
 
+    from app.utils.financial import categorize_description, is_must_pay_in_full
+    v_name = ob.vendor.name if ob.vendor else ""
+    cat = categorize_description(ob.description or "", v_name)
+    if is_must_pay_in_full(cat) and payload.payment_type == "partial":
+        raise HTTPException(status_code=400, detail=f"{cat} obligations cannot be partially paid. Full payment required.")
+
     ob.amount_paid = (ob.amount_paid or 0.0) + payload.amount
     ob.status = (
         ObligationStatus.paid
@@ -97,13 +104,36 @@ async def mark_paid(
 
     # Rebuild financial state and call ML
     dashboard, ml_resp = await ml_helpers.rebuild_and_prioritize(user, db)
+    priorities = [p.model_dump() for p in ml_resp.priorities] if ml_resp else []
+    alerts = ml_resp.alerts if ml_resp else []
 
     return MarkPaidResponse(
         obligation=ObligationOut.model_validate(ob),
         new_balance=dashboard.available_balance,
-        priorities=[p.model_dump() for p in ml_resp.priorities],
-        alerts=ml_resp.alerts,
+        priorities=priorities,
+        alerts=alerts,
     )
+
+
+async def defer_obligation(
+    ob_id: str,
+    days: int,
+    user: User,
+    db: AsyncSession,
+) -> ObligationOut:
+    ob = await _fetch_or_404(ob_id, user.id, db)
+    
+    # Update due date and status
+    from datetime import timedelta
+    ob.due_date = ob.due_date + timedelta(days=days)
+    ob.status = ObligationStatus.deferred
+    
+    await db.flush()
+    await ml_helpers.rebuild_and_prioritize(user, db)
+    await write_audit_log(db, "DEFER_OBLIGATION", user.id, "obligation", ob.id, 
+                          extra={"days": days, "new_due_date": ob.due_date.isoformat()})
+    
+    return ObligationOut.model_validate(ob)
 
 
 async def soft_delete(ob_id: str, user: User, db: AsyncSession) -> None:
@@ -117,7 +147,7 @@ async def _fetch_or_404(ob_id: str, user_id: str, db: AsyncSession) -> Obligatio
         select(Obligation).where(
             and_(Obligation.id == ob_id, Obligation.user_id == user_id,
                  Obligation.deleted_at.is_(None))
-        )
+        ).options(selectinload(Obligation.vendor))
     )
     ob = result.scalar_one_or_none()
     if not ob:

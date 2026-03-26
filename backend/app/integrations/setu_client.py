@@ -47,6 +47,62 @@ async def fetch_transactions(account_id: str) -> list[dict]:
             raise SetuClientError("Setu unreachable") from exc
 
 
+async def create_setu_payment_link(
+    amount: float, bill_ref: str, customer_name: str
+) -> tuple[str, str]:
+    """
+    Create a Setu V2 payment link.
+    Returns (id, url).
+    """
+    url = f"{settings.SETU_BASE_URL}/v2/payment-links"
+    
+    # Setu V2 payload structure
+    payload = {
+        "amount": {
+            "value": int(amount * 100), # value in paise
+            "currencyCode": "INR"
+        },
+        "description": f"Payment for bill {bill_ref}",
+        "billReferenceNumber": bill_ref,
+        "customer": {
+            "name": customer_name
+        }
+    }
+    
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        try:
+            r = await client.post(url, headers=_get_auth_headers(), json=payload)
+            r.raise_for_status()
+            data = r.json()
+            pl = data.get("data", {}).get("paymentLink", {})
+            return (
+                pl.get("id", ""),
+                pl.get("shortUrl") or pl.get("url", "")
+            )
+        except httpx.HTTPStatusError as exc:
+            logger.error("Setu Payment API error %s: %s", exc.response.status_code, exc.response.text)
+            raise SetuClientError(f"Setu Payment error {exc.response.status_code}") from exc
+        except Exception as exc:
+            logger.error("Setu Payment client error: %s", exc)
+            raise SetuClientError("Setu Payment unreachable") from exc
+
+
+async def get_payment_link_status(link_id: str) -> dict:
+    """
+    Check status of a Setu V2 payment link.
+    """
+    url = f"{settings.SETU_BASE_URL}/v2/payment-links/{link_id}"
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        try:
+            r = await client.get(url, headers=_get_auth_headers())
+            r.raise_for_status()
+            data = r.json()
+            return data.get("data", {})
+        except Exception as exc:
+            logger.error("Setu Status check error: %s", exc)
+            raise SetuClientError("Setu Status check failed") from exc
+
+
 def _normalize_transactions(raw_list: list[Any]) -> list[dict]:
     """Map Setu's payload structure to our internal schema."""
     normalized = []

@@ -5,6 +5,7 @@ import 'package:capitalsense/features/admin_page.dart';
 import 'package:capitalsense/features/strategy_tab.dart';
 import 'package:capitalsense/widgets/animated_background.dart';
 import 'package:capitalsense/service/api_service.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -55,7 +56,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       case 0:
         return _buildOverviewTab();
       case 1:
-        return StrategyTab(dashboardData: _dashboardData);
+        return StrategyTab(
+          dashboardData: _dashboardData,
+          onRefresh: _loadDashboard,
+        );
       case 2:
         return _buildRecordsTab();
       case 3:
@@ -371,7 +375,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F5B44), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
             onPressed: () async {
-              if (amountCtrl.text.isEmpty || dateCtrl.text.isEmpty) return;
+              if (amountCtrl.text.trim().isEmpty || dateCtrl.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Please fill Amount and Date."), backgroundColor: Colors.red),
+                );
+                return;
+              }
               Navigator.pop(ctx);
               setState(() => _isLoading = true);
               try {
@@ -468,13 +477,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // ── Add Fund Dialog ────────────────────────────────────────────────────────
 
-  void _showAddFundDialog(BuildContext context) {
+  void _showAddFundDialog(BuildContext sheetCtx) {
     final sourceCtrl = TextEditingController();
     final amountCtrl = TextEditingController();
     final dateCtrl = TextEditingController();
 
+    // Use the main page context to ensure the dialog stays visible after sheet is popped
+    final pageContext = context;
+
     showDialog(
-      context: context,
+      context: pageContext,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(25)),
         title: const Center(child: Text("Add Fund", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E)))),
@@ -495,23 +507,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF0F5B44), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
             onPressed: () async {
-              if (sourceCtrl.text.isEmpty || amountCtrl.text.isEmpty || dateCtrl.text.isEmpty) return;
+              if (sourceCtrl.text.trim().isEmpty || amountCtrl.text.trim().isEmpty || dateCtrl.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Please fill all fields."), backgroundColor: Colors.red),
+                );
+                return;
+              }
+              final messenger = ScaffoldMessenger.of(context);
               Navigator.pop(ctx);
               try {
                 await _api.createFund(
                   sourceName: sourceCtrl.text,
-                  amount: double.parse(amountCtrl.text),
+                  amount: double.tryParse(amountCtrl.text) ?? 0,
                   dateReceived: dateCtrl.text,
                 );
                 _loadDashboard();
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  messenger.showSnackBar(
                     const SnackBar(content: Text("Fund added!"), backgroundColor: Color(0xFF0F5B44)),
                   );
                 }
               } catch (e) {
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  messenger.showSnackBar(
                     SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
                   );
                 }
@@ -795,41 +813,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildRecentRecordsSection() {
-    return FutureBuilder(
-      future: Future.wait([_api.getObligations(), _api.getReceivables(), _api.getFunds()]),
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) return const SizedBox.shrink();
-        final obligations = snapshot.data![0] as List;
-        final receivables = snapshot.data![1] as List;
-        final funds = snapshot.data![2] as List;
+    if (_dashboardData == null) return const SizedBox.shrink();
+    
+    final obligations = _dashboardData!['obligations'] as List? ?? [];
+    final receivables = _dashboardData!['receivables'] as List? ?? [];
+    final funds = _dashboardData!['funds'] as List? ?? [];
 
-        if (obligations.isEmpty && receivables.isEmpty && funds.isEmpty) return const SizedBox.shrink();
+    if (obligations.isEmpty && receivables.isEmpty && funds.isEmpty) return const SizedBox.shrink();
 
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Recent Insights", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E))),
-            const SizedBox(height: 15),
-            if (receivables.isNotEmpty) ...[
-              Text("Invoices (Receivables)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade700)),
-              const SizedBox(height: 8),
-              ...receivables.take(3).map((r) => _buildRecordItem(r, Colors.blue.shade700)).toList(),
-              const SizedBox(height: 15),
-            ],
-            if (obligations.isNotEmpty) ...[
-              Text("Obligations (Payables)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red.shade700)),
-              const SizedBox(height: 8),
-              ...obligations.take(3).map((o) => _buildRecordItem(o, Colors.red.shade700)).toList(),
-              const SizedBox(height: 15),
-            ],
-            if (funds.isNotEmpty) ...[
-              const Text("Operating Funds", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black45)),
-              const SizedBox(height: 8),
-              ...funds.take(3).map((f) => _buildRecordItem(f, const Color(0xFF0F5B44))).toList(),
-            ],
-          ],
-        );
-      },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text("Recent Insights", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0B3B2E))),
+        const SizedBox(height: 15),
+        if (receivables.isNotEmpty) ...[
+          Text("Invoices (Receivables)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.blue.shade700)),
+          const SizedBox(height: 8),
+          ...receivables.take(3).map((r) => _buildRecordItem(r, Colors.blue.shade700)).toList(),
+          const SizedBox(height: 15),
+        ],
+        if (obligations.isNotEmpty) ...[
+          Text("Obligations (Payables)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red.shade700)),
+          const SizedBox(height: 8),
+          ...obligations.take(3).map((o) => _buildRecordItem(o, Colors.red.shade700)).toList(),
+          const SizedBox(height: 15),
+        ],
+        if (funds.isNotEmpty) ...[
+          const Text("Operating Funds", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.black45)),
+          const SizedBox(height: 8),
+          ...funds.take(3).map((f) => _buildRecordItem(f, const Color(0xFF0F5B44))).toList(),
+        ],
+      ],
     );
   }
 
@@ -1230,84 +1244,110 @@ class _DashboardScreenState extends State<DashboardScreen> {
   // ── Records Tab ────────────────────────────────────────────────────────────
 
   Widget _buildRecordsTab() {
-    return Column(
-      children: [
-        SafeArea(
-          bottom: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 20),
-            child: Row(children: const [
-              Icon(Icons.receipt_long, color: Colors.white, size: 26),
-              SizedBox(width: 12),
-              Text("Audit & Records", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-            ]),
-          ),
-        ),
-        Expanded(
-          child: Container(
-            width: double.infinity,
-            decoration: BoxDecoration(color: Colors.white.withOpacity(0.94), borderRadius: const BorderRadius.only(topLeft: Radius.circular(35), topRight: Radius.circular(35))),
-            child: FutureBuilder(
-              future: Future.wait([_api.getObligations(), _api.getReceivables(), _api.getFunds()]),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator(color: Color(0xFF0F5B44)));
-                }
-                final obligations = snapshot.data![0] as List;
-                final receivables = snapshot.data![1] as List;
-                final funds = snapshot.data![2] as List;
-
-                return SingleChildScrollView(
-                  padding: const EdgeInsets.all(25),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildRecordSection("Obligations", obligations, Colors.red.shade700, Icons.arrow_upward),
-                      const SizedBox(height: 20),
-                      _buildRecordSection("Receivables", receivables, Colors.blue.shade700, Icons.arrow_downward),
-                      const SizedBox(height: 20),
-                      _buildRecordSection("Funds", funds, const Color(0xFF0F5B44), Icons.account_balance),
-                      const SizedBox(height: 80),
-                    ],
-                  ),
-                );
-              },
+    return DefaultTabController(
+      length: 3,
+      child: Column(
+        children: [
+          SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 25, vertical: 20),
+              child: Row(children: const [
+                Icon(Icons.receipt_long, color: Colors.white, size: 26),
+                SizedBox(width: 12),
+                Text("Audit & Records", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+              ]),
             ),
           ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildRecordSection(String title, List items, Color color, IconData icon) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Icon(icon, color: color, size: 18),
-            const SizedBox(width: 8),
-            Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color)),
-            const Spacer(),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
-              child: Text("${items.length}", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color)),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        if (items.isEmpty)
           Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(color: Colors.grey.shade50, borderRadius: BorderRadius.circular(15)),
-            child: Center(child: Text("No $title yet", style: const TextStyle(color: Colors.black38))),
-          )
-        else
-          ...items.take(5).map((item) => _buildRecordItem(item, color)).toList(),
-      ],
+            margin: const EdgeInsets.symmetric(horizontal: 25, vertical: 10),
+            height: 45,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: TabBar(
+              indicator: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              labelColor: const Color(0xFF0F5B44),
+              unselectedLabelColor: Colors.white70,
+              labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 10),
+              tabs: [
+                Tab(text: "PAYABLES (${(_dashboardData?['obligations'] as List?)?.length ?? 0})"),
+                Tab(text: "RECEIVABLES (${(_dashboardData?['receivables'] as List?)?.length ?? 0})"),
+                Tab(text: "FUNDS (${(_dashboardData?['funds'] as List?)?.length ?? 0})"),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.94),
+                borderRadius: const BorderRadius.only(topLeft: Radius.circular(35), topRight: Radius.circular(35)),
+              ),
+              child: ClipRRect(
+                borderRadius: const BorderRadius.only(topLeft: Radius.circular(35), topRight: Radius.circular(35)),
+                child: _dashboardData == null
+                  ? const Center(child: CircularProgressIndicator(color: Color(0xFF0F5B44)))
+                  : TabBarView(
+                      children: [
+                         _buildRecordList("Obligations", _dashboardData!['obligations'] as List? ?? [], Colors.red.shade700, Icons.arrow_upward),
+                         _buildRecordList("Receivables", _dashboardData!['receivables'] as List? ?? [], Colors.blue.shade700, Icons.arrow_downward),
+                         _buildRecordList("Operating Funds", _dashboardData!['funds'] as List? ?? [], const Color(0xFF0F5B44), Icons.account_balance),
+                      ],
+                    ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
+
+  Widget _buildRecordList(String title, List items, Color color, IconData icon) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(25),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 18),
+              const SizedBox(width: 8),
+              Text(title, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(12)),
+                child: Text("${items.length}", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          if (items.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 100),
+                child: Column(
+                  children: [
+                    Icon(icon, size: 40, color: Colors.grey.shade200),
+                    const SizedBox(height: 12),
+                    Text("No records found in $title", style: const TextStyle(color: Colors.black38, fontSize: 13)),
+                  ],
+                ),
+              ),
+            )
+          else
+            ...items.map((item) => _buildRecordItem(item, color)).toList(),
+          const SizedBox(height: 80),
+        ],
+      ),
+    );
+  }
+
 
   Widget _buildRecordItem(Map<String, dynamic> item, Color color) {
     final desc = item['description'] ?? item['client_name'] ?? item['source_name'] ?? 'Item';
@@ -1321,13 +1361,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (isObligation) canMark = status != 'paid';
     if (isReceivable) canMark = status != 'received';
 
+    final isTax = desc.toUpperCase().contains('GST') || desc.toUpperCase().contains('TAX') || desc.toUpperCase().contains('TDS');
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.grey.shade100),
+        border: Border.all(color: isTax ? Colors.red.shade200 : Colors.grey.shade100, width: isTax ? 1.5 : 1),
       ),
       child: Row(
         children: [
@@ -1335,7 +1377,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(desc, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                Row(
+                  children: [
+                    Text(desc, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                    if (isTax) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(color: Colors.red.shade700, borderRadius: BorderRadius.circular(6)),
+                        child: const Text("TAX/LEGAL", style: TextStyle(fontSize: 7, color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ],
+                ),
                 const SizedBox(height: 2),
                 Row(
                   children: [
@@ -1359,6 +1413,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Text(_formatCurrency(amount), style: TextStyle(fontWeight: FontWeight.bold, color: color, fontSize: 13)),
               if (canMark) ...[
                 const SizedBox(height: 4),
+                // Mark Paid / Mark Received button
                 GestureDetector(
                   onTap: () => _handleMarkAction(item, isObligation),
                   child: Container(
@@ -1373,6 +1428,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                 ),
+                // PAY NOW via Setu — only for obligations
+                if (isObligation) ...[
+                  const SizedBox(height: 4),
+                  GestureDetector(
+                    onTap: () => _handleSetuPay(item),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: [Color(0xFF6A4CE0), Color(0xFF3A77E8)],
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Text(
+                        "PAY NOW",
+                        style: TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ],
           ),
@@ -1410,6 +1485,46 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (mounted) {
         _loadDashboard(); // This also clears _isLoading
       }
+    }
+  }
+
+  Future<void> _handleSetuPay(Map<String, dynamic> item) async {
+    final id = item['id'];
+    final total = (item['amount'] as num?)?.toDouble() ?? 0;
+    final paid = (item['amount_paid'] as num?)?.toDouble() ?? 0;
+    final remaining = total - paid;
+    if (remaining <= 0) return;
+
+    setState(() => _isLoading = true);
+    try {
+      final result = await _api.createPaymentLink(id, remaining);
+      final paymentLink = result['payment_link'] as String? ?? '';
+      if (paymentLink.isNotEmpty) {
+        final uri = Uri.parse(paymentLink);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Could not open payment link"), backgroundColor: Colors.red),
+            );
+          }
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("No payment link returned from Setu"), backgroundColor: Colors.orange),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Payment error: $e"), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

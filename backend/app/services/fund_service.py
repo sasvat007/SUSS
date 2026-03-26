@@ -20,6 +20,10 @@ async def create(payload: FundCreate, user: User, db: AsyncSession) -> FundOut:
     )
     db.add(fund)
     await db.flush()
+    
+    from app.utils.audit import write_audit_log
+    await write_audit_log(db, "CREATE_FUND", user.id, "fund", fund.id, extra={"amount": fund.amount})
+    
     return FundOut.model_validate(fund)
 
 

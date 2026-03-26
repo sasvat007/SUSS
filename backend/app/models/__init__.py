@@ -7,6 +7,7 @@ from app.models.questionnaire import QuestionnaireResponse
 from app.models.notification import Notification
 from app.models.audit_log import AuditLog
 from app.models.scenario import ScenarioHistory
+from app.models.payment import Payment
 
 __all__ = [
     "User",
@@ -18,4 +19,5 @@ __all__ = [
     "Notification",
     "AuditLog",
     "ScenarioHistory",
+    "Payment",
 ]

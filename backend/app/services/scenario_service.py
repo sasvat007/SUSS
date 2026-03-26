@@ -22,6 +22,42 @@ from deterministic_decision_engine import make_payment_decisions
 logger = logging.getLogger(__name__)
 
 
+def _strategy_name(strategy) -> str:
+    return strategy.strategy_type.value if hasattr(strategy.strategy_type, "value") else str(strategy.strategy_type)
+
+
+def _serialize_strategy_summary(strategy) -> dict:
+    return {
+        "name": _strategy_name(strategy),
+        "total_payment": strategy.total_payment,
+        "penalty_cost": strategy.total_penalty_cost,
+        "survival_probability": strategy.survival_probability,
+        "cash_after": strategy.estimated_cash_after,
+        "decision_count": len(strategy.decisions),
+        "decisions": [
+            {
+                "obligation_id": d.obligation_id,
+                "status": d.status.value if hasattr(d.status, "value") else str(d.status),
+                "pay_amount": d.pay_amount,
+                "delay_days": d.delay_days,
+                "potential_penalty": d.potential_penalty,
+                "rationale": d.rationale,
+                "vendor_name": getattr(d, "vendor_name", ""),
+            }
+            for d in strategy.decisions
+        ],
+    }
+
+
+def _choose_strategy(decisions, risk_level: str):
+    normalized = (risk_level or "MODERATE").upper()
+    if normalized in {"MODERATE", "BALANCED"}:
+        return decisions.base_case.balanced_strategy, "MODERATE"
+    if normalized == "CONSERVATIVE":
+        return decisions.base_case.conservative_strategy, "CONSERVATIVE"
+    return decisions.base_case.aggressive_strategy, "AGGRESSIVE"
+
+
 async def simulate(scenario: dict, user: User, db: AsyncSession) -> dict:
     """
     Run a what-if scenario through all 3 engines.
@@ -71,15 +107,90 @@ async def simulate(scenario: dict, user: User, db: AsyncSession) -> dict:
         logger.error("Scenario simulation failed: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Simulation failed: {exc}") from exc
 
+    selected_strategy, normalized_risk_level = _choose_strategy(decisions, risk_level)
+    aggressive_strategy = decisions.base_case.aggressive_strategy
+    balanced_strategy = decisions.base_case.balanced_strategy
+    conservative_strategy = decisions.base_case.conservative_strategy
+
+    # Calculate Post-Payment Health Score (Projected)
+    post_payables = []
+    from financial_state_engine.models import Payable
+    for p in payables:
+        # p is already an FSE.Payable model from _build_payables
+        decision = next((d for d in selected_strategy.decisions if d.obligation_id == p.id), None)
+        if decision:
+            remaining = p.amount - decision.pay_amount
+            if remaining > 0:
+                post_payables.append(Payable(
+                    id=p.id,
+                    amount=remaining,
+                    due_date=p.due_date, # already a string
+                    description=p.description,
+                    status=p.status,
+                    priority_level=p.priority_level,
+                    category=p.category
+                ))
+        else:
+            post_payables.append(p)
+
+    post_fs = compute_financial_state(
+        current_balance=selected_strategy.estimated_cash_after,
+        transactions=[],
+        payables=post_payables,
+        receivables=receivables,
+        hidden_transactions=[],
+        business_context=business_ctx,
+        reference_date=today_str,
+    )
+
+    aggressive_summary = _serialize_strategy_summary(aggressive_strategy)
+    balanced_summary = _serialize_strategy_summary(balanced_strategy)
+    conservative_summary = _serialize_strategy_summary(conservative_strategy)
+    comparison = {
+        "aggressive": aggressive_summary,
+        "moderate": balanced_summary,
+        "conservative": conservative_summary,
+    }
+    selected_summary = comparison["moderate"] if normalized_risk_level == "MODERATE" else comparison[normalized_risk_level.lower()]
+    comparison_key = "aggressive" if normalized_risk_level == "MODERATE" else "moderate"
+    comparison_summary = comparison[comparison_key]
+
     result = {
         "health_score": financial_state.health_score,
+        "projected_health_score": post_fs.health_score,
         "cash_runway_days": financial_state.cash_runway_days,
+        "projected_runway_days": post_fs.cash_runway_days,
         "scenario_overrides": {
             "balance": balance,
-            "risk_level": risk_level,
+            "risk_level": normalized_risk_level,
             "min_cash_buffer": min_buffer,
         },
-        "recommendation": decisions.base_case.recommended_strategy.value if hasattr(decisions.base_case.recommended_strategy, 'value') else str(decisions.base_case.recommended_strategy) if decisions.base_case else None,
+        "selected_appetite": normalized_risk_level,
+        "comparison_appetite": comparison_key.upper(),
+        "appetite_difference": {
+            "payment_delta": round(selected_summary["total_payment"] - comparison_summary["total_payment"], 2),
+            "penalty_delta": round(selected_summary["penalty_cost"] - comparison_summary["penalty_cost"], 2),
+            "cash_after_delta": round(selected_summary["cash_after"] - comparison_summary["cash_after"], 2),
+            "survival_delta": round(selected_summary["survival_probability"] - comparison_summary["survival_probability"], 2),
+            "is_identical": (
+                round(selected_summary["total_payment"], 2) == round(comparison_summary["total_payment"], 2)
+                and round(selected_summary["penalty_cost"], 2) == round(comparison_summary["penalty_cost"], 2)
+                and round(selected_summary["cash_after"], 2) == round(comparison_summary["cash_after"], 2)
+                and round(selected_summary["survival_probability"], 2) == round(comparison_summary["survival_probability"], 2)
+            ),
+        },
+        "recommendation": _strategy_name(selected_strategy),
+        "strategy_name": _strategy_name(selected_strategy),
+        "strategy_metrics": {
+            "total_payment": selected_strategy.total_payment,
+            "penalty_cost": selected_strategy.total_penalty_cost,
+            "survival_probability": selected_strategy.survival_probability,
+            "cash_after": selected_strategy.estimated_cash_after,
+        },
+        "selected_strategy": selected_summary,
+        "comparison_strategy": comparison_summary,
+        "strategy_comparison": comparison,
+        "strategy_reasoning": decisions.base_case.reasoning,
         "overall_recommendation": decisions.overall_recommendation,
     }
 
