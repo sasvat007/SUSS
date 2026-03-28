@@ -1,7 +1,6 @@
 # CapitalSense 💰
 
-> **A semi-autonomous cash flow decision intelligence system for Indian small businesses.**  
-> Built for SNUC Hacks '26 — Problem Statement 3: FinTech | Team SUSS
+> **An AI-based cash flow decision intelligence system for Indian small businesses.**  
 
 ---
 
@@ -356,14 +355,11 @@ Small business owners are highly sensitive about financial data privacy. The sys
 
 ## Team
 
-**Team Name:** SUSS  
+**Team Name:** RUSS  
 **Team Leader:** Siddharth S  
-**Event:** SNUC Hacks '26 — Shiv Nadar University Chennai  
-**Track:** Problem Statement 3 — FinTech  
-**Room:** 306
 
 ---
 
 ## License
 
-This project was built for SNUC Hacks '26. All rights reserved by Team SUSS.
+All rights reserved by Team RUSS.
